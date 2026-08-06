@@ -132,6 +132,25 @@ peer can re-validate plausibility.
 - **Achievements**: definitions + progress tracked locally, unlocked ones
   become signed gossiped records so others' achievements are browsable.
 
+## Traversal: the orbit command and gravity assists (P1, implemented)
+
+Propulsion is deliberately weak against interplanetary distance; the
+intended way to move is orbital mechanics:
+
+- **Orbit command**: click and HOLD a celestial body. Works only inside
+  the ship's command range (a `Ship` stat, extended by upgrades); the
+  HUD shows hold progress or OUT OF COMMAND RANGE. Completion starts a
+  guided transfer burn (finite thrust, energy cost — an empty tank
+  aborts mid-transfer) toward a circular orbit at ~4 body radii, capped
+  inside the body's sphere of influence. Capture switches to cheap
+  station-keeping: the planet carries the ship around the system — the
+  hitched ride. Any manual thrust returns control to the pilot.
+- **Real slingshots**: every celestial exerts integrated gravity on
+  ships (the sim sums all bodies, not just the sun), so flybys change
+  sun-frame speed exactly as physics says they should. A clean assist —
+  enter a planet's SOI in free flight, exit faster, zero thrust used —
+  is detected and scored (1000 points each).
+
 ## Feature ideas beyond the brief (for fun and longevity)
 
 - Wormhole pairs between galaxies: fast travel, found only by studying

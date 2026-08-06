@@ -47,11 +47,23 @@ fn tick_clock(mut clock: ResMut<SimClock>) {
 #[derive(Component)]
 pub struct OnRails(pub KeplerOrbit);
 
+/// Any body ships can orbit, slingshot around, or be pulled by. Every one
+/// of these exerts real gravity on ships each tick.
+#[derive(Component)]
+pub struct CelestialBody {
+    /// G * mass, m^3/s^2.
+    pub mu: f64,
+    /// Physical radius, m (also the gravity softening floor).
+    pub radius: f64,
+    /// Sphere of influence, m; infinite for the system's sun.
+    pub soi: f64,
+    pub name: String,
+}
+
 /// The sun of the current system.
 #[derive(Component)]
 pub struct SunBody {
     pub class: SunClass,
-    pub mu: f64,
     pub hazard_radius: f64,
 }
 
@@ -64,6 +76,8 @@ pub struct Ship {
     pub shield_tier: u8,
     pub hull: f64,
     pub thrust: f64,
+    /// Max distance at which the orbit command works; upgrades extend it.
+    pub command_range: f64,
 }
 
 impl Default for Ship {
@@ -75,6 +89,7 @@ impl Default for Ship {
             shield_tier: 1,
             hull: 100.0,
             thrust: 25.0,
+            command_range: 8.0e10,
         }
     }
 }
@@ -99,8 +114,13 @@ fn spawn_current_system(
     commands.spawn((
         SunBody {
             class: system.sun.class,
-            mu,
             hazard_radius: system.sun.hazard_radius,
+        },
+        CelestialBody {
+            mu,
+            radius: system.sun.radius.max(2.0e9),
+            soi: f64::INFINITY,
+            name: format!("{:?}-class sun", system.sun.class),
         },
         SimPos(Vec3d::ZERO),
         Mesh3d(meshes.add(Sphere::new(2.0e9).mesh().ico(4).unwrap())),
@@ -119,9 +139,19 @@ fn spawn_current_system(
         perceptual_roughness: 0.9,
         ..default()
     });
-    for planet in &system.planets {
+    for (i, planet) in system.planets.iter().enumerate() {
         commands.spawn((
             OnRails(planet.orbit),
+            CelestialBody {
+                mu: oj_orbits::G * planet.mass,
+                radius: planet.radius.max(1.0e8),
+                soi: oj_orbits::sphere_of_influence(
+                    planet.orbit.semi_major,
+                    planet.mass,
+                    system.sun.mass,
+                ),
+                name: format!("Planet {}", i + 1),
+            },
             SimPos::default(),
             Mesh3d(planet_mesh.clone()),
             MeshMaterial3d(planet_mat.clone()),
@@ -138,6 +168,7 @@ fn spawn_current_system(
     let v = circular_speed(mu, r);
     commands.spawn((
         Ship::default(),
+        crate::command::NavState::Free,
         OriginAnchor,
         SimPos(Vec3d::new(r, 0.0, 0.0)),
         SimVel(Vec3d::new(0.0, v, 0.0)),
@@ -189,11 +220,17 @@ fn ship_controls(
 fn integrate_ships(
     keys: Res<ButtonInput<KeyCode>>,
     suns: Query<(&SunBody, &SimPos), Without<Ship>>,
+    bodies: Query<(&CelestialBody, &SimPos), Without<Ship>>,
     mut ships: Query<(&Ship, &mut SimPos, &mut SimVel), With<Ship>>,
 ) {
-    let Ok((sun, sun_pos)) = suns.single() else { return };
+    let Ok((_sun, sun_pos)) = suns.single() else { return };
     for (ship, mut pos, mut vel) in &mut ships {
-        let mut accel = gravity_accel(sun.mu, sun_pos.0, pos.0, 1.0e6);
+        // Every celestial pulls: this is what makes slingshots and planet
+        // capture REAL physics rather than scripted moves.
+        let mut accel = oj_orbits::Vec3d::ZERO;
+        for (body, body_pos) in &bodies {
+            accel += gravity_accel(body.mu, body_pos.0, pos.0, body.radius);
+        }
         if ship.energy > 0.0 {
             // Thrust in the orbital plane: prograde/retrograde on up/down,
             // radial on left/right. Scaled by warp so it stays effective.

@@ -64,6 +64,8 @@ pub struct RunScore {
     pub energy_harvested: f64,
     pub suns_survived: u32,
     pub salvage_value: u64,
+    /// Clean gravity assists flown (SOI transit, no thrust, net speed gain).
+    pub assists: u32,
     /// Last-seen ship energy, for attributing positive deltas to harvest.
     last_energy: Option<f64>,
 }
@@ -74,6 +76,7 @@ impl RunScore {
             + (self.energy_harvested as u64) * 2
             + self.suns_survived as u64 * 500
             + self.salvage_value * 10
+            + self.assists as u64 * 1000
     }
 }
 
@@ -256,6 +259,7 @@ fn respawn(
     study.progress = 0.0; // knowledge of the sun survives; progress does not
     commands.spawn((
         Ship::default(),
+        crate::command::NavState::Free,
         OriginAnchor,
         SimPos(Vec3d::new(r, 0.0, 0.0)),
         SimVel(Vec3d::new(0.0, v, 0.0)),

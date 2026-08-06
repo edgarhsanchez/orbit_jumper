@@ -4,8 +4,9 @@
 use bevy::prelude::*;
 use bevy_pf::prelude::*;
 
+use crate::command::{CommandHold, NavState};
 use crate::modules::{CareerScore, RunScore, StudyState, displayed_sun_class};
-use crate::sim::{Ship, SunBody};
+use crate::sim::{CelestialBody, Ship, SunBody};
 
 #[derive(Reflect, Default, Bindable)]
 struct HudVm {
@@ -15,6 +16,8 @@ struct HudVm {
     sun_class: String,
     score: f64,
     best: f64,
+    nav: String,
+    speed: f64,
 }
 
 #[derive(Resource, Clone)]
@@ -46,6 +49,8 @@ const HUD_XAML: &str = r##"
     <TextBlock Text="hull" Width="60" Foreground="#E0876E"/>
     <ProgressBar Width="180" Height="10" Maximum="100" Value="{Binding hull}"/>
   </StackPanel>
+  <TextBlock Text="{Binding nav}" Foreground="#B8A0E0" Margin="0,8,0,0"/>
+  <TextBlock Text="{Binding speed, StringFormat=speed: {0} km/s}" Foreground="#8FBCB0"/>
   <TextBlock Text="{Binding score, StringFormat=score: {0}}" Foreground="#E0D06E" Margin="0,8,0,0"/>
   <TextBlock Text="{Binding best, StringFormat=best: {0}}" Foreground="#8A8F98"/>
 </StackPanel>
@@ -59,6 +64,8 @@ fn spawn_hud(mut commands: Commands) {
         sun_class: "unknown (hold S to study)".into(),
         score: 0.0,
         best: 0.0,
+        nav: "free flight".into(),
+        speed: 0.0,
     });
     commands.insert_resource(HudModel(vm.clone()));
     commands.queue(move |world: &mut World| {
@@ -74,15 +81,35 @@ fn spawn_hud(mut commands: Commands) {
 
 fn update_hud(
     model: Option<Res<HudModel>>,
-    ships: Query<&Ship>,
+    ships: Query<(&Ship, &crate::SimVel, &NavState)>,
     suns: Query<&SunBody>,
+    bodies: Query<&CelestialBody>,
+    hold: Res<CommandHold>,
     study: Res<StudyState>,
     run: Res<RunScore>,
     career: Res<CareerScore>,
 ) {
-    let (Some(model), Ok(ship)) = (model, ships.single()) else {
+    let (Some(model), Ok((ship, vel, nav))) = (model, ships.single()) else {
         return;
     };
+    let name = |e: bevy::prelude::Entity| {
+        bodies.get(e).map(|b| b.name.clone()).unwrap_or_else(|_| "?".into())
+    };
+    let nav_text = if let Some(target) = hold.target {
+        if hold.out_of_range {
+            format!("{}: OUT OF COMMAND RANGE", name(target))
+        } else {
+            format!("commanding {}: {:.0}%", name(target), hold.progress * 100.0)
+        }
+    } else {
+        match *nav {
+            NavState::Free => "free flight — click+hold a body to orbit it".into(),
+            NavState::Transfer { target } => format!("transferring to {}", name(target)),
+            NavState::Orbiting { body } => format!("orbiting {} (riding along)", name(body)),
+        }
+    };
+    model.0.set_nav(nav_text);
+    model.0.set_speed((vel.0.length() / 100.0).round() / 10.0);
     // Equality-checked setters: an unchanged bar costs nothing downstream.
     model.0.set_energy((ship.energy * 10.0).round() / 10.0);
     model.0.set_shield((ship.shield * 10.0).round() / 10.0);
