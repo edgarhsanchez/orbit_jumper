@@ -53,8 +53,12 @@ pub struct UpgradesPlugin;
 
 impl Plugin for UpgradesPlugin {
     fn build(&self, app: &mut App) {
+        // Starter armament: a tier-1 laser, so combat is reachable before
+        // the first salvage run.
+        let mut tiers = HashMap::default();
+        tiers.insert(UpgradeSlot::LaserWeapon, 1);
         app.insert_resource(ShipUpgrades {
-            tiers: HashMap::default(),
+            tiers,
             book: Recipe::book(),
         })
         .add_systems(Update, (buy_upgrades, apply_to_new_ships));

@@ -68,6 +68,9 @@ pub struct RunScore {
     pub salvage_value: u64,
     /// Clean gravity assists flown (SOI transit, no thrust, net speed gain).
     pub assists: u32,
+    /// Practice drones (and later, ships) destroyed.
+    pub kills: u32,
+    hits: u32,
     /// Last-seen ship energy, for attributing positive deltas to harvest.
     last_energy: Option<f64>,
 }
@@ -79,6 +82,12 @@ impl RunScore {
             + self.suns_survived as u64 * 500
             + self.salvage_value * 10
             + self.assists as u64 * 1000
+            + self.kills as u64 * 300
+            + self.hits as u64 * 5
+    }
+
+    pub fn score_hit(&mut self) {
+        self.hits += 1;
     }
 }
 
