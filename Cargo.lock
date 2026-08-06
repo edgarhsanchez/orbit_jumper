@@ -1228,7 +1228,7 @@ dependencies = [
 [[package]]
 name = "bevy_pf"
 version = "0.1.0"
-source = "git+https://github.com/edgarhsanchez/bevy_pf#92fd7afba4132be638344a0f668bef2e07e97eec"
+source = "git+https://github.com/edgarhsanchez/bevy_pf#af6d90774dd899ad1f159e9f36719799981e0384"
 dependencies = [
  "bevy",
  "bevy_pf_macros",
@@ -1242,7 +1242,7 @@ dependencies = [
 [[package]]
 name = "bevy_pf_macros"
 version = "0.1.0"
-source = "git+https://github.com/edgarhsanchez/bevy_pf#92fd7afba4132be638344a0f668bef2e07e97eec"
+source = "git+https://github.com/edgarhsanchez/bevy_pf#af6d90774dd899ad1f159e9f36719799981e0384"
 dependencies = [
  "bevy_pf_xaml",
  "proc-macro2",
@@ -1253,7 +1253,7 @@ dependencies = [
 [[package]]
 name = "bevy_pf_xaml"
 version = "0.1.0"
-source = "git+https://github.com/edgarhsanchez/bevy_pf#92fd7afba4132be638344a0f668bef2e07e97eec"
+source = "git+https://github.com/edgarhsanchez/bevy_pf#af6d90774dd899ad1f159e9f36719799981e0384"
 dependencies = [
  "roxmltree",
  "thiserror 2.0.19",
