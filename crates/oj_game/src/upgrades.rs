@@ -44,6 +44,8 @@ impl ShipUpgrades {
         ship.thrust = base.thrust * 1.2f64.powi(self.tier(UpgradeSlot::RocketDrive) as i32);
         ship.energy_max =
             base.energy_max * (1.0 + 0.5 * self.tier(UpgradeSlot::EnergyCollector) as f64);
+        ship.orbit_boost =
+            base.orbit_boost + 0.25 * self.tier(UpgradeSlot::GravityDrive) as f64;
     }
 }
 
@@ -72,21 +74,58 @@ fn buy_upgrades(
         (KeyCode::Digit2, UpgradeSlot::CommandArray),
         (KeyCode::Digit3, UpgradeSlot::RocketDrive),
         (KeyCode::Digit4, UpgradeSlot::EnergyCollector),
+        (KeyCode::Digit5, UpgradeSlot::GravityDrive),
     ];
     for (key, slot) in picks {
-        if !keys.just_pressed(key) {
-            continue;
+        if keys.just_pressed(key) {
+            try_buy(&mut upgrades, &mut run, &mut ships, slot);
         }
-        let Some(cost) = upgrades.next_cost(slot) else { continue };
-        if run.salvage_value < cost {
-            continue;
-        }
-        run.salvage_value -= cost;
-        let next = upgrades.tier(slot) + 1;
-        upgrades.tiers.insert(slot, next);
-        if let Ok(mut ship) = ships.single_mut() {
-            upgrades.apply(&mut ship);
-        }
+    }
+}
+
+fn try_buy(
+    upgrades: &mut ShipUpgrades,
+    run: &mut RunScore,
+    ships: &mut Query<&mut Ship>,
+    slot: UpgradeSlot,
+) {
+    let Some(cost) = upgrades.next_cost(slot) else { return };
+    if run.salvage_value < cost {
+        return;
+    }
+    run.salvage_value -= cost;
+    let next = upgrades.tier(slot) + 1;
+    upgrades.tiers.insert(slot, next);
+    if let Ok(mut ship) = ships.single_mut() {
+        upgrades.apply(&mut ship);
+    }
+}
+
+/// Buy from an exclusive-world context — the entry point XAML button
+/// commands call.
+pub fn buy_from_world(world: &mut World, slot: UpgradeSlot) {
+    world.resource_scope(|world, mut upgrades: Mut<ShipUpgrades>| {
+        world.resource_scope(|world, mut run: Mut<RunScore>| {
+            let mut ships = world.query::<&mut Ship>();
+            let Some(cost) = upgrades.next_cost(slot) else { return };
+            if run.salvage_value < cost {
+                return;
+            }
+            run.salvage_value -= cost;
+            let next = upgrades.tier(slot) + 1;
+            upgrades.tiers.insert(slot, next);
+            if let Ok(mut ship) = ships.single_mut(world) {
+                upgrades.apply(&mut ship);
+            }
+        });
+    });
+}
+
+/// "name Tn — next: cost" row text for the vessel panel.
+pub fn row(upgrades: &ShipUpgrades, label: &str, slot: UpgradeSlot) -> String {
+    match upgrades.next_cost(slot) {
+        Some(cost) => format!("{label} T{} — next {} salvage", upgrades.tier(slot), cost),
+        None => format!("{label} T{} — maxed", upgrades.tier(slot)),
     }
 }
 

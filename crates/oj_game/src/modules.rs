@@ -3,7 +3,9 @@
 //! Each is a small plugin over the sim's components; they communicate
 //! through events and resources, never by reaching into each other.
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use oj_materials::Element;
 use oj_orbits::Vec3d;
 use oj_universe::SunClass;
 
@@ -144,12 +146,17 @@ fn tick_score(mut run: ResMut<RunScore>, ships: Query<&Ship>) {
 // Salvage + death/respawn
 // ---------------------------------------------------------------------------
 
-/// A piece of wreckage or debris carrying salvage value (element units
-/// arrive with the inventory pass; value stands in for them here).
+/// A piece of wreckage or debris: salvage value plus the element it
+/// yields into the stash when collected.
 #[derive(Component)]
 pub struct Wreck {
     pub value: u64,
+    pub element: Element,
 }
+
+/// The vessel's hold: collected elements, ready for crafting.
+#[derive(Resource, Default)]
+pub struct Stash(pub HashMap<Element, u32>);
 
 /// Fired when a hull reaches zero.
 #[derive(Message)]
@@ -161,7 +168,8 @@ pub struct SalvagePlugin;
 
 impl Plugin for SalvagePlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<ShipDestroyed>()
+        app.init_resource::<Stash>()
+            .add_message::<ShipDestroyed>()
             .add_systems(
                 FixedUpdate,
                 (detect_death, spawn_wrecks, collect_wrecks, respawn).chain(),
@@ -206,8 +214,10 @@ fn spawn_wrecks(
                 (i as f64 * 37.0).sin() * 1.0e8,
                 0.0,
             );
+            // A dead hull scraps into structural metals.
+            let element = if i % 2 == 0 { Element::Iron } else { Element::Titanium };
             commands.spawn((
-                Wreck { value: 20 },
+                Wreck { value: 20, element },
                 SimPos(death.at + offset),
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(mat.clone()),
@@ -223,12 +233,14 @@ fn collect_wrecks(
     wrecks: Query<(Entity, &Wreck, &SimPos), Without<Ship>>,
     ships: Query<&SimPos, With<Ship>>,
     mut run: ResMut<RunScore>,
+    mut stash: ResMut<Stash>,
     mut commands: Commands,
 ) {
     let Ok(ship_pos) = ships.single() else { return };
     for (entity, wreck, pos) in &wrecks {
         if pos.0.distance(ship_pos.0) < COLLECT_RADIUS {
             run.salvage_value += wreck.value;
+            *stash.0.entry(wreck.element).or_default() += 1;
             commands.entity(entity).despawn();
         }
     }

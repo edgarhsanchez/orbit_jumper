@@ -147,8 +147,13 @@ fn guide_nav(
     } else {
         Vec3d::new(-r_hat.y, r_hat.x, 0.0).normalized()
     };
+    // Bigger bodies mean faster rides for free (v = sqrt(mu/r)); the
+    // gravity drive multiplies further. Overspeeding a circular orbit
+    // needs continuous inward correction, so the energy price below is
+    // the real centripetal deficit, not a fee schedule.
+    let v_ride = v_circ * if station_keeping { ship.orbit_boost } else { 1.0 };
     let radial_gain = 0.5 * v_circ / r_target;
-    let v_des = t_hat * v_circ + r_hat * (radial_gain * (r_target - r)).clamp(-v_circ, v_circ);
+    let v_des = t_hat * v_ride + r_hat * (radial_gain * (r_target - r)).clamp(-v_circ, v_circ);
 
     let dv = v_des - rel_vel;
     let a_max = ship.thrust * TIME_WARP * if station_keeping { 0.5 } else { 4.0 };

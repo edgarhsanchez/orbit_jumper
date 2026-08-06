@@ -92,6 +92,10 @@ pub struct Ship {
     pub thrust: f64,
     /// Max distance at which the orbit command works; upgrades extend it.
     pub command_range: f64,
+    /// Orbital overspeed factor while riding a body: 1.0 = natural circular
+    /// speed; above it the gravity drive pushes the ship faster than the
+    /// orbit wants, paying continuous energy for the centripetal deficit.
+    pub orbit_boost: f64,
 }
 
 impl Default for Ship {
@@ -104,6 +108,7 @@ impl Default for Ship {
             hull: 100.0,
             thrust: 25.0,
             command_range: 8.0e10,
+            orbit_boost: 1.0,
         }
     }
 }
@@ -225,7 +230,13 @@ fn spawn_current_system(
                     },
                     parent: planet_entity,
                 },
-                crate::modules::Wreck { value: 5 },
+                crate::modules::Wreck {
+                    value: 5,
+                    element: {
+                        let opts = oj_materials::Element::from_profile(planet.resources);
+                        opts[(debris_rng.next_u64() % opts.len() as u64) as usize]
+                    },
+                },
                 SimPos::default(),
                 BodyVel::default(),
                 Mesh3d(debris_mesh.clone()),
