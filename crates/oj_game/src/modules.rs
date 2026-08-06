@@ -1,0 +1,282 @@
+//! P1 gameplay modules: study, scorecard, salvage/respawn.
+//!
+//! Each is a small plugin over the sim's components; they communicate
+//! through events and resources, never by reaching into each other.
+
+use bevy::prelude::*;
+use oj_orbits::Vec3d;
+use oj_universe::SunClass;
+
+use crate::sim::{DT, OriginAnchor, Ship, SimClock, SunBody, TIME_WARP};
+use crate::{GameUniverse, SimPos, SimVel};
+
+// ---------------------------------------------------------------------------
+// Study
+// ---------------------------------------------------------------------------
+
+/// Progress of studying the current system's sun. Holding S near a sun
+/// fills it; completion reveals the class (and the shield tier needed)
+/// in the HUD. Skipping the study and diving in is the gamble the design
+/// doc promises.
+#[derive(Resource, Default)]
+pub struct StudyState {
+    pub progress: f64,
+    pub revealed: bool,
+}
+
+pub struct StudyPlugin;
+
+impl Plugin for StudyPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<StudyState>()
+            .add_systems(FixedUpdate, run_study);
+    }
+}
+
+fn run_study(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut study: ResMut<StudyState>,
+    suns: Query<&SunBody>,
+    ships: Query<&Ship>,
+) {
+    if study.revealed || !keys.pressed(KeyCode::KeyS) {
+        return;
+    }
+    let (Ok(sun), Ok(_ship)) = (suns.single(), ships.single()) else {
+        return;
+    };
+    // Sensor tier shortens study time later; tier 1 for now.
+    let needed = sun.class.study_seconds();
+    study.progress += DT;
+    if study.progress >= needed {
+        study.revealed = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scorecard
+// ---------------------------------------------------------------------------
+
+/// Per-run stats, reset on death.
+#[derive(Resource, Default, Clone)]
+pub struct RunScore {
+    pub seconds_survived: f64,
+    pub energy_harvested: f64,
+    pub suns_survived: u32,
+    pub salvage_value: u64,
+    /// Last-seen ship energy, for attributing positive deltas to harvest.
+    last_energy: Option<f64>,
+}
+
+impl RunScore {
+    pub fn total(&self) -> u64 {
+        (self.seconds_survived as u64)
+            + (self.energy_harvested as u64) * 2
+            + self.suns_survived as u64 * 500
+            + self.salvage_value * 10
+    }
+}
+
+/// Lifetime totals, persisted to disk between sessions.
+#[derive(Resource, Default, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CareerScore {
+    pub best_run: u64,
+    pub total_score: u64,
+    pub runs: u32,
+    pub ships_lost: u32,
+}
+
+fn career_path() -> std::path::PathBuf {
+    // Local persistence first; the global board arrives with the net phase.
+    std::path::PathBuf::from("orbit_jumper_career.ron")
+}
+
+impl CareerScore {
+    pub fn load() -> Self {
+        std::fs::read_to_string(career_path())
+            .ok()
+            .and_then(|s| ron::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+    pub fn save(&self) {
+        if let Ok(text) = ron::to_string(self) {
+            let _ = std::fs::write(career_path(), text);
+        }
+    }
+    pub fn absorb(&mut self, run: &RunScore) {
+        let score = run.total();
+        self.best_run = self.best_run.max(score);
+        self.total_score += score;
+        self.runs += 1;
+        self.save();
+    }
+}
+
+pub struct ScorePlugin;
+
+impl Plugin for ScorePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<RunScore>()
+            .insert_resource(CareerScore::load())
+            .add_systems(FixedUpdate, tick_score);
+    }
+}
+
+fn tick_score(mut run: ResMut<RunScore>, ships: Query<&Ship>) {
+    let Ok(ship) = ships.single() else {
+        run.last_energy = None;
+        return;
+    };
+    run.seconds_survived += DT * TIME_WARP;
+    if let Some(last) = run.last_energy {
+        let delta = ship.energy - last;
+        if delta > 0.0 {
+            run.energy_harvested += delta;
+        }
+    }
+    run.last_energy = Some(ship.energy);
+}
+
+// ---------------------------------------------------------------------------
+// Salvage + death/respawn
+// ---------------------------------------------------------------------------
+
+/// A piece of wreckage or debris carrying salvage value (element units
+/// arrive with the inventory pass; value stands in for them here).
+#[derive(Component)]
+pub struct Wreck {
+    pub value: u64,
+}
+
+/// Fired when a hull reaches zero.
+#[derive(Message)]
+pub struct ShipDestroyed {
+    pub at: Vec3d,
+}
+
+pub struct SalvagePlugin;
+
+impl Plugin for SalvagePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_message::<ShipDestroyed>()
+            .add_systems(
+                FixedUpdate,
+                (detect_death, spawn_wrecks, collect_wrecks, respawn).chain(),
+            );
+    }
+}
+
+fn detect_death(
+    mut events: MessageWriter<ShipDestroyed>,
+    ships: Query<(Entity, &Ship, &SimPos)>,
+    mut commands: Commands,
+) {
+    for (entity, ship, pos) in &ships {
+        if ship.hull <= 0.0 {
+            events.write(ShipDestroyed { at: pos.0 });
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn spawn_wrecks(
+    mut events: MessageReader<ShipDestroyed>,
+    mut career: ResMut<CareerScore>,
+    mut run: ResMut<RunScore>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for death in events.read() {
+        career.ships_lost += 1;
+        career.absorb(&run);
+        *run = RunScore::default();
+        // The lost ship becomes claimable scrap, scattered near the wreck.
+        let mesh = meshes.add(Cuboid::new(4.0e7, 4.0e7, 4.0e7).mesh());
+        let mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.5, 0.45, 0.4),
+            ..default()
+        });
+        for i in 0..5 {
+            let offset = Vec3d::new(
+                (i as f64 - 2.0) * 1.5e8,
+                (i as f64 * 37.0).sin() * 1.0e8,
+                0.0,
+            );
+            commands.spawn((
+                Wreck { value: 20 },
+                SimPos(death.at + offset),
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::default(),
+            ));
+        }
+    }
+}
+
+const COLLECT_RADIUS: f64 = 5.0e8;
+
+fn collect_wrecks(
+    wrecks: Query<(Entity, &Wreck, &SimPos), Without<Ship>>,
+    ships: Query<&SimPos, With<Ship>>,
+    mut run: ResMut<RunScore>,
+    mut commands: Commands,
+) {
+    let Ok(ship_pos) = ships.single() else { return };
+    for (entity, wreck, pos) in &wrecks {
+        if pos.0.distance(ship_pos.0) < COLLECT_RADIUS {
+            run.salvage_value += wreck.value;
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// A destroyed vessel is forever lost — but the pilot flies again: a fresh
+/// tier-1 ship spawns at the starting orbit with a zeroed run score.
+fn respawn(
+    ships: Query<(), With<Ship>>,
+    game: Res<GameUniverse>,
+    mut study: ResMut<StudyState>,
+    _clock: Res<SimClock>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if !ships.is_empty() {
+        return;
+    }
+    let Some(system) = game.universe.system(game.current) else { return };
+    let mu = oj_orbits::G * system.sun.mass;
+    let r = system
+        .planets
+        .first()
+        .map(|p| p.orbit.semi_major * 0.6)
+        .unwrap_or(1.0e11);
+    let v = oj_orbits::circular_speed(mu, r);
+    study.progress = 0.0; // knowledge of the sun survives; progress does not
+    commands.spawn((
+        Ship::default(),
+        OriginAnchor,
+        SimPos(Vec3d::new(r, 0.0, 0.0)),
+        SimVel(Vec3d::new(0.0, v, 0.0)),
+        Mesh3d(meshes.add(Cone::new(6.0e7, 2.0e8).mesh().resolution(16))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.8, 0.85, 0.9),
+            metallic: 0.8,
+            ..default()
+        })),
+        Transform::default(),
+    ));
+}
+
+/// Which sun class the HUD should display, honoring the study state.
+pub fn displayed_sun_class(class: SunClass, revealed: bool) -> String {
+    if revealed {
+        format!(
+            "{class:?} — shield tier {} required",
+            class.required_shield_tier()
+        )
+    } else {
+        "unknown (hold S to study)".to_string()
+    }
+}

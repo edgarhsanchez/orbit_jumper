@@ -15,6 +15,7 @@ use bevy_pf::prelude::*;
 use oj_orbits::Vec3d;
 use oj_universe::{SectorCoord, SystemId, Universe};
 
+mod modules;
 mod sim;
 mod ui;
 
@@ -29,6 +30,7 @@ fn main() {
         }))
         .add_plugins(PfUiPlugin)
         .add_plugins((sim::SimPlugin, ui::HudPlugin))
+        .add_plugins((modules::StudyPlugin, modules::ScorePlugin, modules::SalvagePlugin))
         .run();
 }
 

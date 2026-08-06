@@ -4,7 +4,8 @@
 use bevy::prelude::*;
 use bevy_pf::prelude::*;
 
-use crate::sim::Ship;
+use crate::modules::{CareerScore, RunScore, StudyState, displayed_sun_class};
+use crate::sim::{Ship, SunBody};
 
 #[derive(Reflect, Default, Bindable)]
 struct HudVm {
@@ -12,6 +13,8 @@ struct HudVm {
     shield: f64,
     hull: f64,
     sun_class: String,
+    score: f64,
+    best: f64,
 }
 
 #[derive(Resource, Clone)]
@@ -43,19 +46,19 @@ const HUD_XAML: &str = r##"
     <TextBlock Text="hull" Width="60" Foreground="#E0876E"/>
     <ProgressBar Width="180" Height="10" Maximum="100" Value="{Binding hull}"/>
   </StackPanel>
+  <TextBlock Text="{Binding score, StringFormat=score: {0}}" Foreground="#E0D06E" Margin="0,8,0,0"/>
+  <TextBlock Text="{Binding best, StringFormat=best: {0}}" Foreground="#8A8F98"/>
 </StackPanel>
 "##;
 
-fn spawn_hud(mut commands: Commands, game: Res<crate::GameUniverse>) {
+fn spawn_hud(mut commands: Commands) {
     let vm = Bindable::new(HudVm {
         energy: 100.0,
         shield: 100.0,
         hull: 100.0,
-        sun_class: game
-            .universe
-            .system(game.current)
-            .map(|s| format!("{:?} (unstudied)", s.sun.class))
-            .unwrap_or_else(|| "??".into()),
+        sun_class: "unknown (hold S to study)".into(),
+        score: 0.0,
+        best: 0.0,
     });
     commands.insert_resource(HudModel(vm.clone()));
     commands.queue(move |world: &mut World| {
@@ -69,7 +72,14 @@ fn spawn_hud(mut commands: Commands, game: Res<crate::GameUniverse>) {
     });
 }
 
-fn update_hud(model: Option<Res<HudModel>>, ships: Query<&Ship>) {
+fn update_hud(
+    model: Option<Res<HudModel>>,
+    ships: Query<&Ship>,
+    suns: Query<&SunBody>,
+    study: Res<StudyState>,
+    run: Res<RunScore>,
+    career: Res<CareerScore>,
+) {
     let (Some(model), Ok(ship)) = (model, ships.single()) else {
         return;
     };
@@ -77,4 +87,9 @@ fn update_hud(model: Option<Res<HudModel>>, ships: Query<&Ship>) {
     model.0.set_energy((ship.energy * 10.0).round() / 10.0);
     model.0.set_shield((ship.shield * 10.0).round() / 10.0);
     model.0.set_hull((ship.hull * 10.0).round() / 10.0);
+    model.0.set_score(run.total() as f64);
+    model.0.set_best(career.best_run as f64);
+    if let Ok(sun) = suns.single() {
+        model.0.set_sun_class(displayed_sun_class(sun.class, study.revealed));
+    }
 }
