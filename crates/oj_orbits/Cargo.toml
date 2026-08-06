@@ -1,0 +1,9 @@
+[package]
+name = "oj_orbits"
+description = "Orbital mechanics core: Kepler propagation on rails, two-body gravity, patched-conic helpers. Engine-free f64 math."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }

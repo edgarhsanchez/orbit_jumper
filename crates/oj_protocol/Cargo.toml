@@ -1,0 +1,14 @@
+[package]
+name = "oj_protocol"
+description = "Shared multiplayer protocol types: ids, signed events, snapshots. The seam the P2P layer plugs into."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+oj_orbits = { workspace = true }
+oj_universe = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+ron = { workspace = true }

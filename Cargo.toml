@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/oj_orbits",
+    "crates/oj_universe",
+    "crates/oj_materials",
+    "crates/oj_protocol",
+    "crates/oj_game",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+oj_orbits = { path = "crates/oj_orbits" }
+oj_universe = { path = "crates/oj_universe" }
+oj_materials = { path = "crates/oj_materials" }
+oj_protocol = { path = "crates/oj_protocol" }
+
+glam = { version = "0.30", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+ron = "0.11"
+bevy = { version = "0.19", default-features = true }
+bevy_pf = { git = "https://github.com/edgarhsanchez/bevy_pf" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Matches the production profile bevy_pf ships with (measured +7% there).
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

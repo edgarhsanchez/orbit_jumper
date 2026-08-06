@@ -1,0 +1,10 @@
+[package]
+name = "oj_materials"
+description = "Material science: elements, alloys, and the upgrade recipes they gate. Pure, engine-free."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+oj_universe = { workspace = true }
+serde = { workspace = true }
