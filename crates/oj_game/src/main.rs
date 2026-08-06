@@ -26,6 +26,8 @@ mod weapons;
 
 fn main() {
     App::new()
+        // Space is not gray: also proves the 3D pass composites under the UI.
+        .insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.045)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "orbit jumper".into(),

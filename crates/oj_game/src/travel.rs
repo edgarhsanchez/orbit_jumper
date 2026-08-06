@@ -136,3 +136,120 @@ fn perform_jump(
     changed.write(SystemChanged);
     info!("jumped to {:?}: {:?} sun", target, destination.sun.class);
 }
+
+/// Headless cross-frame exercise of the jump: real plugins, real frames,
+/// no renderer. The transient (teardown + respawn) is exactly what a
+/// settled-screenshot check would miss — the suite tests it on purpose.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GameUniverse;
+    use crate::sim::SystemScoped;
+    use crate::weapons::TargetDrone;
+
+    fn headless_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
+        app.init_asset::<Mesh>();
+        app.init_asset::<StandardMaterial>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_plugins((
+            crate::sim::SimPlugin,
+            crate::modules::StudyPlugin,
+            crate::modules::ScorePlugin,
+            crate::modules::SalvagePlugin,
+            crate::command::CommandPlugin,
+            crate::upgrades::UpgradesPlugin,
+            crate::weapons::WeaponsPlugin,
+            TravelPlugin,
+        ));
+        app
+    }
+
+    fn scoped_count(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<SystemScoped>>()
+            .iter(world)
+            .count()
+    }
+
+    fn fill_tank(app: &mut App) {
+        let world = app.world_mut();
+        let mut ships = world.query::<&mut Ship>();
+        let mut ship = ships.single_mut(world).unwrap();
+        ship.energy_max = 1.0e9;
+        ship.energy = 1.0e9;
+    }
+
+    #[test]
+    fn jump_tears_down_rebuilds_and_revisits_deterministically() {
+        let mut app = headless_app();
+        app.update(); // startup: bodies, ship, drones
+
+        let start = app.world().resource::<GameUniverse>().current;
+        let scoped_at_start = scoped_count(&mut app);
+        assert!(scoped_at_start > 0, "startup spawned nothing system-scoped");
+
+        let (target, dist) = {
+            let game = app.world().resource::<GameUniverse>();
+            let nearby = nearby_systems(game, 1);
+            assert!(!nearby.is_empty(), "tutorial sector holds only one system");
+            nearby[0]
+        };
+
+        // An empty tank must refuse the jump.
+        {
+            let world = app.world_mut();
+            let mut ships = world.query::<&mut Ship>();
+            ships.single_mut(world).unwrap().energy = 0.0;
+        }
+        app.world_mut().resource_mut::<PendingJump>().0 = Some(target);
+        app.update();
+        assert_eq!(
+            app.world().resource::<GameUniverse>().current,
+            start,
+            "jump went through with no energy"
+        );
+
+        // Funded, the jump lands: current flips, the old system is gone,
+        // the new one is populated, the ship paid and was reset.
+        fill_tank(&mut app);
+        app.world_mut().resource_mut::<PendingJump>().0 = Some(target);
+        app.update();
+        app.update(); // drone respawn consumes SystemChanged by here
+
+        assert_eq!(app.world().resource::<GameUniverse>().current, target);
+        assert!(scoped_count(&mut app) > 0, "destination spawned nothing");
+        {
+            let world = app.world_mut();
+            let mut suns = world.query::<&crate::sim::SunBody>();
+            assert_eq!(suns.iter(world).count(), 1, "expected exactly one sun");
+            let mut drones = world.query_filtered::<Entity, With<TargetDrone>>();
+            assert_eq!(drones.iter(world).count(), 4, "drones did not respawn");
+            let mut ships = world.query::<(&Ship, &crate::SimPos)>();
+            let (ship, pos) = ships.single(world).unwrap();
+            let cost = jump_cost(dist);
+            assert!(
+                ship.energy <= 1.0e9 - cost + 1.0,
+                "jump cost not charged: {} left, cost {}",
+                ship.energy,
+                cost
+            );
+            assert!(pos.0.y.abs() < 1.0, "ship not reset to the start orbit");
+        }
+
+        // Jumping home rebuilds the SAME system: the seed, not saved
+        // state, is the level format.
+        fill_tank(&mut app);
+        app.world_mut().resource_mut::<PendingJump>().0 = Some(start);
+        app.update();
+        app.update();
+        assert_eq!(app.world().resource::<GameUniverse>().current, start);
+        assert_eq!(
+            scoped_count(&mut app),
+            scoped_at_start,
+            "revisited system differs from the original"
+        );
+    }
+}

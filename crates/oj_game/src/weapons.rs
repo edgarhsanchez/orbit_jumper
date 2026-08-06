@@ -110,7 +110,7 @@ fn spawn_drone_set(
         .first()
         .map(|p| p.orbit.semi_major * 0.6)
         .unwrap_or(1.0e11);
-    let mesh = meshes.add(Sphere::new(5.0e7).mesh().ico(2).unwrap());
+    let mesh = meshes.add(Sphere::new(5.0).mesh().ico(2).unwrap());
     let mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.85, 0.4, 0.35),
         emissive: LinearRgba::rgb(0.6, 0.1, 0.1),
@@ -190,7 +190,7 @@ fn fire_weapons(
             },
             SimPos(pos.0 + vel.0.normalized() * 3.0e8),
             SimVel(vel.0 + vel.0.normalized() * 2000.0),
-            Mesh3d(meshes.add(Cone::new(2.0e7, 8.0e7).mesh().resolution(8))),
+            Mesh3d(meshes.add(Cone::new(2.0, 8.0).mesh().resolution(8))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(0.9, 0.8, 0.3),
                 emissive: LinearRgba::rgb(2.0, 1.5, 0.3),
@@ -215,7 +215,7 @@ fn fire_weapons(
                 },
                 SimPos(pos.0 + vel.0.normalized() * 5.0e8),
                 SimVel(vel.0 * 1.02),
-                Mesh3d(meshes.add(Sphere::new(1.5e8).mesh().ico(3).unwrap())),
+                Mesh3d(meshes.add(Sphere::new(15.0).mesh().ico(3).unwrap())),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::srgba(0.5, 0.3, 0.9, 0.6),
                     emissive: if sign > 0.0 {
@@ -335,7 +335,7 @@ fn reap_hulls(
         }
         run.kills += 1;
         commands.entity(entity).despawn();
-        let mesh = meshes.add(Cuboid::new(3.0e7, 3.0e7, 3.0e7).mesh());
+        let mesh = meshes.add(Cuboid::new(3.0, 3.0, 3.0).mesh());
         let mat = materials.add(StandardMaterial {
             base_color: Color::srgb(0.55, 0.5, 0.45),
             ..default()

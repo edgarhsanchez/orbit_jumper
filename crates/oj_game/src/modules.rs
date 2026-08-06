@@ -212,7 +212,7 @@ fn spawn_wrecks(
         career.absorb(&run);
         *run = RunScore::default();
         // The lost ship becomes claimable scrap, scattered near the wreck.
-        let mesh = meshes.add(Cuboid::new(4.0e7, 4.0e7, 4.0e7).mesh());
+        let mesh = meshes.add(Cuboid::new(4.0, 4.0, 4.0).mesh());
         let mat = materials.add(StandardMaterial {
             base_color: Color::srgb(0.5, 0.45, 0.4),
             ..default()
@@ -285,7 +285,7 @@ fn respawn(
         OriginAnchor,
         SimPos(Vec3d::new(r, 0.0, 0.0)),
         SimVel(Vec3d::new(0.0, v, 0.0)),
-        Mesh3d(meshes.add(Cone::new(6.0e7, 2.0e8).mesh().resolution(16))),
+        Mesh3d(meshes.add(Cone::new(6.0, 20.0).mesh().resolution(16))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.8, 0.85, 0.9),
             metallic: 0.8,

@@ -76,7 +76,15 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_hud, toggle_panel));
+            .add_systems(Update, (update_hud, toggle_panel, log_commands));
+    }
+}
+
+/// Every XAML command activation, in the log — cheap and permanently
+/// useful for driving the UI from automation.
+fn log_commands(mut msgs: MessageReader<bevy_pf::binding::PfCommandInvoked>) {
+    for m in msgs.read() {
+        info!("ui command: {} ({:?})", m.command, m.parameter);
     }
 }
 
@@ -86,7 +94,7 @@ fn toggle_panel(
     map: Option<Res<MapPanel>>,
     mut vis: Query<&mut Visibility>,
 ) {
-    let mut flip = |entity: bevy::prelude::Entity| {
+    let flip = |vis: &mut Query<&mut Visibility>, entity: bevy::prelude::Entity| {
         if let Ok(mut v) = vis.get_mut(entity) {
             *v = match *v {
                 Visibility::Hidden => Visibility::Inherited,
@@ -94,15 +102,39 @@ fn toggle_panel(
             };
         }
     };
+    let hide = |vis: &mut Query<&mut Visibility>, entity: bevy::prelude::Entity| {
+        if let Ok(mut v) = vis.get_mut(entity) {
+            *v = Visibility::Hidden;
+        }
+    };
+    // The panels overlap on screen, so opening one closes the other.
     if keys.just_pressed(KeyCode::Tab)
-        && let Some(vessel) = vessel
+        && let Some(vessel) = &vessel
     {
-        flip(vessel.0);
+        if let Some(map) = &map {
+            hide(&mut vis, map.0);
+        }
+        flip(&mut vis, vessel.0);
     }
     if keys.just_pressed(KeyCode::KeyM)
-        && let Some(map) = map
+        && let Some(map) = &map
     {
-        flip(map.0);
+        if let Some(vessel) = &vessel {
+            hide(&mut vis, vessel.0);
+        }
+        flip(&mut vis, map.0);
+    }
+}
+
+/// Opt an entire UI subtree out of pointer picking.
+fn ignore_picking_recursive(world: &mut World, entity: Entity) {
+    world.entity_mut(entity).insert(bevy::picking::Pickable::IGNORE);
+    let kids: Vec<Entity> = world
+        .get::<Children>(entity)
+        .map(|c| c.iter().collect())
+        .unwrap_or_default();
+    for kid in kids {
+        ignore_picking_recursive(world, kid);
     }
 }
 
@@ -136,7 +168,7 @@ const HUD_XAML: &str = r##"
 const MAP_XAML: &str = r##"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        HorizontalAlignment="Center" VerticalAlignment="Center"
+        HorizontalAlignment="Center" VerticalAlignment="Center" Margin="340,12,0,0"
         Background="#D810141C" BorderBrush="#3A4552" BorderThickness="1"
         CornerRadius="8" Padding="12" Width="420">
   <StackPanel>
@@ -162,7 +194,7 @@ const MAP_XAML: &str = r##"
 const PANEL_XAML: &str = r##"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12"
+        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="340,12,0,0"
         Background="#D810141C" BorderBrush="#3A4552" BorderThickness="1"
         CornerRadius="8" Padding="12" Width="320">
   <StackPanel>
@@ -309,7 +341,14 @@ fn spawn_hud(mut commands: Commands) {
             // Instantiation replaces root components; re-attach the context.
             world.entity_mut(root).insert(DataContext(vm.clone()));
             match panel {
-                Panel::Hud => {}
+                Panel::Hud => {
+                    // The HUD is a passive readout, but its root spans the
+                    // window and stack rows stretch full-width: with default
+                    // Pickable they swallow clicks aimed at panels and the
+                    // 3D scene beneath (found by click-path tracing). The
+                    // whole tree opts out of picking.
+                    ignore_picking_recursive(world, root);
+                }
                 Panel::Vessel => {
                     world.entity_mut(root).insert(Visibility::Hidden);
                     world.insert_resource(VesselPanel(root));

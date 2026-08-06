@@ -148,18 +148,35 @@ fn spawn_current_system(
         OriginAnchor,
         SimPos(Vec3d::new(r, 0.0, 0.0)),
         SimVel(Vec3d::new(0.0, v, 0.0)),
-        Mesh3d(meshes.add(Cone::new(6.0e7, 2.0e8).mesh().resolution(16))),
+        Mesh3d(meshes.add(Cone::new(6.0, 20.0).mesh().resolution(16))),
+        // Slight emissive: a bare-metal hull with no environment map
+        // renders black in space (verified by screenshot, 2026-08-06).
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.8, 0.85, 0.9),
-            metallic: 0.8,
+            metallic: 0.2,
+            emissive: LinearRgba::rgb(2.0, 2.6, 3.6),
             ..default()
         })),
         Transform::default(),
     ));
 
+    // Camera works in RENDER units (sim / 1e7): the ship rides at the
+    // render origin; orbits live in the XY plane, so the view is
+    // top-down. The far plane must reach the sun from anywhere in the
+    // system (~1e5 render units), nowhere near the 1000-unit default.
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(0.0, -1.2e9, 6.0e8).looking_at(Vec3::ZERO, Vec3::Z),
+        Projection::Perspective(PerspectiveProjection {
+            far: 5.0e6,
+            ..default()
+        }),
+        // The sun is the main light; ambient keeps night sides readable.
+        AmbientLight {
+            color: Color::srgb(0.7, 0.8, 1.0),
+            brightness: 300.0,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, 600.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     info!(
         "system {:?}: {:?} sun, {} planets",
@@ -194,29 +211,37 @@ pub fn spawn_bodies(
         },
         SimPos(Vec3d::ZERO),
         BodyVel::default(),
-        Mesh3d(meshes.add(Sphere::new(2.0e9).mesh().ico(4).unwrap())),
+        Mesh3d(meshes.add(Sphere::new(200.0).mesh().ico(4).unwrap())),
         MeshMaterial3d(materials.add(StandardMaterial {
             emissive: LinearRgba::rgb(8.0, 6.5, 3.0),
             base_color: Color::srgb(1.0, 0.9, 0.5),
             ..default()
         })),
+        PointLight {
+            color: Color::srgb(1.0, 0.95, 0.85),
+            intensity: 3.0e13,
+            range: 2.0e6,
+            radius: 200.0,
+            shadow_maps_enabled: false,
+            ..default()
+        },
         Transform::default(),
     ));
 
     // Planets on rails. One shared mesh: automatic instancing batches them.
-    let planet_mesh = meshes.add(Sphere::new(4.0e8).mesh().ico(3).unwrap());
+    let planet_mesh = meshes.add(Sphere::new(40.0).mesh().ico(3).unwrap());
     let planet_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.45, 0.5, 0.6),
         perceptual_roughness: 0.9,
         ..default()
     });
-    let moon_mesh = meshes.add(Sphere::new(1.2e8).mesh().ico(2).unwrap());
+    let moon_mesh = meshes.add(Sphere::new(12.0).mesh().ico(2).unwrap());
     let moon_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.6, 0.58, 0.55),
         perceptual_roughness: 1.0,
         ..default()
     });
-    let debris_mesh = meshes.add(Cuboid::new(3.0e7, 2.0e7, 2.5e7).mesh());
+    let debris_mesh = meshes.add(Cuboid::new(3.0, 2.0, 2.5).mesh());
     let debris_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.4, 0.38, 0.35),
         ..default()
@@ -425,7 +450,10 @@ fn harvest_and_hazard(
 
 /// Camera-relative f32 rendering: subtract the anchor's f64 position, cast
 /// down, hand bevy an ordinary Transform. Render-space scale compresses the
-/// scene so f32 depth stays sane.
+/// scene so f32 depth stays sane. MESHES ARE AUTHORED IN RENDER UNITS
+/// (sim meters / 1e7): only translations pass through this scale, so a
+/// mesh authored in meters renders 1e7x too large (found by screenshot —
+/// the camera sat inside the ship's own cone).
 const RENDER_SCALE: f64 = 1.0 / 1.0e7;
 
 fn sync_render_transforms(
