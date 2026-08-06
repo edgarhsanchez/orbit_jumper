@@ -10,13 +10,14 @@ use crate::command::{CommandHold, NavState};
 use crate::modules::{CareerScore, RunScore, Stash, StudyState, displayed_sun_class};
 use crate::sim::{CelestialBody, Ship, SunBody};
 
-/// One stash row: element name, count, and the icon fill colour the
-/// DataTemplate binds onto a XAML Ellipse.
+/// A generic icon row (stash items, achievement medals): name, count or
+/// spare text, and the fill colour the DataTemplate binds onto an Ellipse.
 #[derive(Reflect, Clone, PartialEq, Default)]
 struct StashVm {
     name: String,
     count: f64,
     color: String,
+    desc: String,
 }
 
 fn element_display(e: Element) -> (&'static str, &'static str) {
@@ -49,6 +50,8 @@ struct HudVm {
     row_collector: String,
     row_gravity: String,
     stash: Vec<StashVm>,
+    achievements: Vec<StashVm>,
+    feed: Vec<String>,
 }
 
 #[derive(Resource, Clone)]
@@ -153,6 +156,27 @@ const PANEL_XAML: &str = r##"
         </DataTemplate>
       </ItemsControl.ItemTemplate>
     </ItemsControl>
+    <TextBlock Text="ACHIEVEMENTS" Foreground="#9FD0FF" FontSize="15" Margin="0,10,0,2"/>
+    <ItemsControl ItemsSource="{Binding achievements}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+            <Ellipse Width="13" Height="13" Fill="{Binding color}"/>
+            <TextBlock Text="{Binding name}" Width="110" Margin="8,0,0,0"/>
+            <TextBlock Text="{Binding desc}" Foreground="#8A8F98" FontSize="11"/>
+          </StackPanel>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <TextBlock Text="FEED (network soon)" Foreground="#9FD0FF" FontSize="15" Margin="0,10,0,2"/>
+    <ItemsControl ItemsSource="{Binding feed}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <TextBlock Text="{Binding}" Foreground="#8A8F98" FontSize="11" Margin="0,1,0,0"/>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
     <TextBlock Text="[Tab] close" Foreground="#5A5F68" Margin="0,8,0,0"/>
   </StackPanel>
 </Border>
@@ -180,6 +204,8 @@ fn spawn_hud(mut commands: Commands) {
         row_collector: String::new(),
         row_gravity: String::new(),
         stash: Vec::new(),
+        achievements: Vec::new(),
+        feed: Vec::new(),
     });
     // XAML button commands route into the world through the model.
     for (name, slot) in [
@@ -222,6 +248,8 @@ fn update_hud(
     career: Res<CareerScore>,
     ship_upgrades: Res<crate::upgrades::ShipUpgrades>,
     stash: Res<Stash>,
+    achieved: Res<crate::achievements::Unlocked>,
+    flash: Res<crate::achievements::LastUnlock>,
 ) {
     let (Some(model), Ok((ship, vel, nav))) = (model, ships.single()) else {
         return;
@@ -242,7 +270,7 @@ fn update_hud(
             NavState::Orbiting { body } => format!("orbiting {} (riding along)", name(body)),
         }
     };
-    model.0.set_nav(nav_text);
+    model.0.set_nav(if flash.ttl > 0.0 { flash.text.clone() } else { nav_text });
     model.0.set_speed((vel.0.length() / 100.0).round() / 10.0);
     // Equality-checked setters: an unchanged bar costs nothing downstream.
     model.0.set_energy((ship.energy * 10.0).round() / 10.0);
@@ -257,12 +285,36 @@ fn update_hud(
     model.0.set_row_drive(crate::upgrades::row(u, "rocket drive", UpgradeSlot::RocketDrive));
     model.0.set_row_collector(crate::upgrades::row(u, "collector", UpgradeSlot::EnergyCollector));
     model.0.set_row_gravity(crate::upgrades::row(u, "gravity drive", UpgradeSlot::GravityDrive));
+    let medals: Vec<StashVm> = crate::achievements::Achievement::ALL
+        .iter()
+        .map(|a| StashVm {
+            name: a.name().into(),
+            count: 0.0,
+            color: if achieved.0.contains(a) { "#E0C36E".into() } else { "#3A4048".into() },
+            desc: a.description().into(),
+        })
+        .collect();
+    model.0.set_achievements(medals);
+    let feed: Vec<String> = crate::achievements::read_feed()
+        .iter()
+        .rev()
+        .take(6)
+        .map(|r| match r {
+            oj_protocol::GlobalRecord::AchievementUnlocked { achievement, .. } => {
+                format!("you unlocked {achievement}")
+            }
+            oj_protocol::GlobalRecord::ScoreFinal { run_score, .. } => {
+                format!("run ended: {run_score}")
+            }
+        })
+        .collect();
+    model.0.set_feed(feed);
     let mut items: Vec<StashVm> = stash
         .0
         .iter()
         .map(|(e, n)| {
             let (name, color) = element_display(*e);
-            StashVm { name: name.into(), count: *n as f64, color: color.into() }
+            StashVm { name: name.into(), count: *n as f64, color: color.into(), desc: String::new() }
         })
         .collect();
     items.sort_by(|a, b| a.name.cmp(&b.name));
