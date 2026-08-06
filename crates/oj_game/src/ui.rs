@@ -18,6 +18,8 @@ struct HudVm {
     best: f64,
     nav: String,
     speed: f64,
+    upgrades: String,
+    salvage: f64,
 }
 
 #[derive(Resource, Clone)]
@@ -53,6 +55,8 @@ const HUD_XAML: &str = r##"
   <TextBlock Text="{Binding speed, StringFormat=speed: {0} km/s}" Foreground="#8FBCB0"/>
   <TextBlock Text="{Binding score, StringFormat=score: {0}}" Foreground="#E0D06E" Margin="0,8,0,0"/>
   <TextBlock Text="{Binding best, StringFormat=best: {0}}" Foreground="#8A8F98"/>
+  <TextBlock Text="{Binding salvage, StringFormat=salvage: {0}}" Foreground="#C9A96E"/>
+  <TextBlock Text="{Binding upgrades}" Foreground="#7E97B8" Margin="0,4,0,0"/>
 </StackPanel>
 "##;
 
@@ -66,6 +70,8 @@ fn spawn_hud(mut commands: Commands) {
         best: 0.0,
         nav: "free flight".into(),
         speed: 0.0,
+        upgrades: String::new(),
+        salvage: 0.0,
     });
     commands.insert_resource(HudModel(vm.clone()));
     commands.queue(move |world: &mut World| {
@@ -88,6 +94,7 @@ fn update_hud(
     study: Res<StudyState>,
     run: Res<RunScore>,
     career: Res<CareerScore>,
+    ship_upgrades: Res<crate::upgrades::ShipUpgrades>,
 ) {
     let (Some(model), Ok((ship, vel, nav))) = (model, ships.single()) else {
         return;
@@ -115,6 +122,8 @@ fn update_hud(
     model.0.set_shield((ship.shield * 10.0).round() / 10.0);
     model.0.set_hull((ship.hull * 10.0).round() / 10.0);
     model.0.set_score(run.total() as f64);
+    model.0.set_salvage(run.salvage_value as f64);
+    model.0.set_upgrades(crate::upgrades::summary(&ship_upgrades));
     model.0.set_best(career.best_run as f64);
     if let Ok(sun) = suns.single() {
         model.0.set_sun_class(displayed_sun_class(sun.class, study.revealed));

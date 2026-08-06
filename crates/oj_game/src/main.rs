@@ -19,6 +19,7 @@ mod command;
 mod modules;
 mod sim;
 mod ui;
+mod upgrades;
 
 fn main() {
     App::new()
@@ -33,6 +34,7 @@ fn main() {
         .add_plugins((sim::SimPlugin, ui::HudPlugin))
         .add_plugins((modules::StudyPlugin, modules::ScorePlugin, modules::SalvagePlugin))
         .add_plugins((bevy::picking::mesh_picking::MeshPickingPlugin, command::CommandPlugin))
+        .add_plugins(upgrades::UpgradesPlugin)
         .run();
 }
 

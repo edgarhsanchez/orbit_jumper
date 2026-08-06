@@ -25,6 +25,7 @@ impl Plugin for SimPlugin {
                 (
                     tick_clock,
                     place_celestials,
+                    place_child_rails,
                     ship_controls,
                     integrate_ships,
                     harvest_and_hazard,
@@ -43,9 +44,22 @@ fn tick_clock(mut clock: ResMut<SimClock>) {
     clock.0 += DT * TIME_WARP;
 }
 
-/// A body on rails.
+/// A body on rails around the system origin (the sun).
 #[derive(Component)]
 pub struct OnRails(pub KeplerOrbit);
+
+/// A body on rails around another railed body (moons, ring debris).
+/// Positions/velocities compose: parent state + local orbit state.
+#[derive(Component)]
+pub struct OnRailsAround {
+    pub orbit: KeplerOrbit,
+    pub parent: Entity,
+}
+
+/// Rails-derived velocity, m/s, updated with SimPos each tick. Zero for
+/// the sun. Guidance and assist logic read this instead of re-deriving.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct BodyVel(pub Vec3d);
 
 /// Any body ships can orbit, slingshot around, or be pulled by. Every one
 /// of these exerts real gravity on ships each tick.
@@ -123,6 +137,7 @@ fn spawn_current_system(
             name: format!("{:?}-class sun", system.sun.class),
         },
         SimPos(Vec3d::ZERO),
+        BodyVel::default(),
         Mesh3d(meshes.add(Sphere::new(2.0e9).mesh().ico(4).unwrap())),
         MeshMaterial3d(materials.add(StandardMaterial {
             emissive: LinearRgba::rgb(8.0, 6.5, 3.0),
@@ -139,24 +154,85 @@ fn spawn_current_system(
         perceptual_roughness: 0.9,
         ..default()
     });
+    let moon_mesh = meshes.add(Sphere::new(1.2e8).mesh().ico(2).unwrap());
+    let moon_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.6, 0.58, 0.55),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    let debris_mesh = meshes.add(Cuboid::new(3.0e7, 2.0e7, 2.5e7).mesh());
+    let debris_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.4, 0.38, 0.35),
+        ..default()
+    });
+    let mut debris_rng = oj_universe::SplitMix64(game.universe.seed ^ 0xDEB215);
     for (i, planet) in system.planets.iter().enumerate() {
-        commands.spawn((
-            OnRails(planet.orbit),
-            CelestialBody {
-                mu: oj_orbits::G * planet.mass,
-                radius: planet.radius.max(1.0e8),
-                soi: oj_orbits::sphere_of_influence(
-                    planet.orbit.semi_major,
-                    planet.mass,
-                    system.sun.mass,
-                ),
-                name: format!("Planet {}", i + 1),
-            },
-            SimPos::default(),
-            Mesh3d(planet_mesh.clone()),
-            MeshMaterial3d(planet_mat.clone()),
-            Transform::default(),
-        ));
+        let planet_entity = commands
+            .spawn((
+                OnRails(planet.orbit),
+                CelestialBody {
+                    mu: oj_orbits::G * planet.mass,
+                    radius: planet.radius.max(1.0e8),
+                    soi: oj_orbits::sphere_of_influence(
+                        planet.orbit.semi_major,
+                        planet.mass,
+                        system.sun.mass,
+                    ),
+                    name: format!("Planet {}", i + 1),
+                },
+                SimPos::default(),
+                BodyVel::default(),
+                Mesh3d(planet_mesh.clone()),
+                MeshMaterial3d(planet_mat.clone()),
+                Transform::default(),
+            ))
+            .id();
+        // Moons: commandable bodies riding parented rails.
+        for (m, moon) in planet.moons.iter().enumerate() {
+            commands.spawn((
+                OnRailsAround { orbit: moon.orbit, parent: planet_entity },
+                CelestialBody {
+                    mu: oj_orbits::G * moon.mass,
+                    radius: moon.radius.max(3.0e7),
+                    soi: oj_orbits::sphere_of_influence(
+                        moon.orbit.semi_major,
+                        moon.mass,
+                        planet.mass,
+                    ),
+                    name: format!("Planet {} moon {}", i + 1, (b'a' + m as u8) as char),
+                },
+                SimPos::default(),
+                BodyVel::default(),
+                Mesh3d(moon_mesh.clone()),
+                MeshMaterial3d(moon_mat.clone()),
+                Transform::default(),
+            ));
+        }
+        // Ring debris: salvage on parented rails, density from the seed.
+        let count = (planet.debris_density * 30.0) as u32;
+        for _ in 0..count {
+            let r = planet.radius.max(1.0e8) * debris_rng.range(4.0, 14.0);
+            commands.spawn((
+                OnRailsAround {
+                    orbit: KeplerOrbit {
+                        mu: oj_orbits::G * planet.mass,
+                        semi_major: r,
+                        eccentricity: debris_rng.range(0.0, 0.1),
+                        inclination: debris_rng.range(-0.15, 0.15),
+                        raan: debris_rng.range(0.0, std::f64::consts::TAU),
+                        arg_periapsis: 0.0,
+                        mean_anomaly_epoch: debris_rng.range(0.0, std::f64::consts::TAU),
+                    },
+                    parent: planet_entity,
+                },
+                crate::modules::Wreck { value: 5 },
+                SimPos::default(),
+                BodyVel::default(),
+                Mesh3d(debris_mesh.clone()),
+                MeshMaterial3d(debris_mat.clone()),
+                Transform::default(),
+            ));
+        }
     }
 
     // The ship starts in a comfortable circular orbit of the sun.
@@ -193,9 +269,26 @@ fn spawn_current_system(
     );
 }
 
-fn place_celestials(clock: Res<SimClock>, mut bodies: Query<(&OnRails, &mut SimPos)>) {
-    for (rails, mut pos) in &mut bodies {
-        pos.0 = rails.0.state_at(clock.0).0;
+fn place_celestials(clock: Res<SimClock>, mut bodies: Query<(&OnRails, &mut SimPos, &mut BodyVel)>) {
+    for (rails, mut pos, mut vel) in &mut bodies {
+        let (p, v) = rails.0.state_at(clock.0);
+        pos.0 = p;
+        vel.0 = v;
+    }
+}
+
+/// Runs after [`place_celestials`]: children read their parent's fresh
+/// state. Filters keep the two SimPos borrows disjoint.
+fn place_child_rails(
+    clock: Res<SimClock>,
+    parents: Query<(&SimPos, &BodyVel), Without<OnRailsAround>>,
+    mut children: Query<(&OnRailsAround, &mut SimPos, &mut BodyVel), With<OnRailsAround>>,
+) {
+    for (rails, mut pos, mut vel) in &mut children {
+        let Ok((ppos, pvel)) = parents.get(rails.parent) else { continue };
+        let (p, v) = rails.orbit.state_at(clock.0);
+        pos.0 = ppos.0 + p;
+        vel.0 = pvel.0 + v;
     }
 }
 

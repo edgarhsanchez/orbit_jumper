@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use oj_orbits::Vec3d;
 
 use crate::modules::RunScore;
-use crate::sim::{CelestialBody, DT, OnRails, Ship, SimClock, TIME_WARP};
+use crate::sim::{BodyVel, CelestialBody, DT, Ship, TIME_WARP};
 use crate::{SimPos, SimVel};
 
 /// Seconds of hold to issue an orbit command.
@@ -105,15 +105,9 @@ fn tick_hold(
     }
 }
 
-/// Body velocity: rails-propagated for planets, zero for the sun.
-fn body_velocity(rails: Option<&OnRails>, t: f64) -> Vec3d {
-    rails.map(|r| r.0.state_at(t).1).unwrap_or(Vec3d::ZERO)
-}
-
 fn guide_nav(
     keys: Res<ButtonInput<KeyCode>>,
-    clock: Res<SimClock>,
-    bodies: Query<(&CelestialBody, &SimPos, Option<&OnRails>)>,
+    bodies: Query<(&CelestialBody, &SimPos, &BodyVel)>,
     mut ships: Query<(&mut Ship, &SimPos, &mut SimVel, &mut NavState)>,
 ) {
     let Ok((mut ship, pos, mut vel, mut nav)) = ships.single_mut() else { return };
@@ -132,13 +126,13 @@ fn guide_nav(
         NavState::Transfer { target } => (target, false),
         NavState::Orbiting { body } => (body, true),
     };
-    let Ok((body, body_pos, rails)) = bodies.get(target) else {
+    let Ok((body, body_pos, body_vel)) = bodies.get(target) else {
         *nav = NavState::Free;
         return;
     };
     let dt = DT * TIME_WARP;
     let rel_pos = pos.0 - body_pos.0;
-    let rel_vel = vel.0 - body_velocity(rails, clock.0);
+    let rel_vel = vel.0 - body_vel.0;
     let r = rel_pos.length().max(body.radius);
 
     // Target ring: close enough to feel "in orbit", never inside the body,
@@ -186,7 +180,7 @@ fn track_assists(
     keys: Res<ButtonInput<KeyCode>>,
     mut tracker: ResMut<AssistTracker>,
     mut run: ResMut<RunScore>,
-    bodies: Query<(Entity, &CelestialBody, &SimPos, Option<&OnRails>)>,
+    bodies: Query<(Entity, &CelestialBody, &SimPos)>,
     ships: Query<(&SimPos, &SimVel, &NavState)>,
 ) {
     let Ok((pos, vel, nav)) = ships.single() else {
@@ -203,7 +197,7 @@ fn track_assists(
     // Deepest finite-SOI body containing the ship (planets, not the sun).
     let containing = bodies
         .iter()
-        .filter(|(_, b, bp, _)| b.soi.is_finite() && pos.0.distance(bp.0) < b.soi)
+        .filter(|(_, b, bp)| b.soi.is_finite() && pos.0.distance(bp.0) < b.soi)
         .min_by(|a, b| {
             let da = pos.0.distance(a.2.0) / a.1.soi;
             let db = pos.0.distance(b.2.0) / b.1.soi;

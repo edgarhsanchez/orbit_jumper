@@ -14,6 +14,10 @@
 //! the bevy_pf_vector benchmark suite standardized on.
 
 use oj_orbits::{KeplerOrbit, Vec3d};
+
+fn crate_g() -> f64 {
+    oj_orbits::G
+}
 use serde::{Deserialize, Serialize};
 
 /// SplitMix64: seed -> stream of well-mixed u64s.
@@ -216,6 +220,17 @@ pub struct Sun {
     pub hazard_radius: f64,
 }
 
+/// A moon: a body on rails around its planet (mu = G * planet mass).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Moon {
+    /// kg.
+    pub mass: f64,
+    /// m.
+    pub radius: f64,
+    /// Orbit around the PLANET, not the sun.
+    pub orbit: KeplerOrbit,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Planet {
     /// kg.
@@ -227,6 +242,7 @@ pub struct Planet {
     /// Ring/asteroid density in [0,1]: how much salvageable debris and
     /// ambient rock the spawner scatters around this planet.
     pub debris_density: f64,
+    pub moons: Vec<Moon>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,12 +347,35 @@ impl Universe {
                 arg_periapsis: rng.range(0.0, std::f64::consts::TAU),
                 mean_anomaly_epoch: rng.range(0.0, std::f64::consts::TAU),
             };
+            let radius = (mass / 5500.0 * 3.0 / (4.0 * std::f64::consts::PI)).cbrt();
+            let planet_mu = crate_g() * mass;
+            let moon_count = rng.range_u32(0, 4);
+            let mut moons = Vec::with_capacity(moon_count as usize);
+            let mut moon_r = radius * rng.range(6.0, 12.0);
+            for _ in 0..moon_count {
+                moon_r *= rng.range(1.6, 2.4);
+                let moon_mass = mass * rng.range(1e-4, 5e-3);
+                moons.push(Moon {
+                    mass: moon_mass,
+                    radius: (moon_mass / 3300.0 * 3.0 / (4.0 * std::f64::consts::PI)).cbrt(),
+                    orbit: KeplerOrbit {
+                        mu: planet_mu,
+                        semi_major: moon_r,
+                        eccentricity: rng.range(0.0, 0.08),
+                        inclination: rng.range(-0.1, 0.1),
+                        raan: rng.range(0.0, std::f64::consts::TAU),
+                        arg_periapsis: rng.range(0.0, std::f64::consts::TAU),
+                        mean_anomaly_epoch: rng.range(0.0, std::f64::consts::TAU),
+                    },
+                });
+            }
             planets.push(Planet {
                 mass,
-                radius: (mass / 5500.0 * 3.0 / (4.0 * std::f64::consts::PI)).cbrt(),
+                radius,
                 orbit,
                 resources: ResourceProfile::roll(&mut rng),
                 debris_density: rng.next_f64() * rng.next_f64(), // skew low
+                moons,
             });
         }
 
@@ -410,6 +449,15 @@ mod tests {
                 assert!(p.orbit.semi_major > sys.sun.radius);
                 // A planet's year is a real Kepler period.
                 assert!(p.orbit.period() > 0.0);
+                for m in &p.moons {
+                    // Moons orbit outside their planet, well inside its SOI.
+                    assert!(m.orbit.semi_major > p.radius);
+                    let soi = oj_orbits::sphere_of_influence(
+                        p.orbit.semi_major, p.mass, sys.sun.mass);
+                    assert!(m.orbit.semi_major < soi,
+                        "moon at {} outside SOI {}", m.orbit.semi_major, soi);
+                    assert!(m.orbit.period() > 0.0);
+                }
                 checked += 1;
             }
         }

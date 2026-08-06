@@ -162,6 +162,8 @@ pub enum UpgradeSlot {
     EnergyCollector,
     StudySensor,
     CargoHold,
+    /// Extends the ship's orbit-command range.
+    CommandArray,
 }
 
 /// A craftable upgrade: property thresholds the chosen alloy must meet,
@@ -181,7 +183,7 @@ impl Recipe {
     /// monotonic by construction.
     pub fn book() -> Vec<Recipe> {
         let mut out = Vec::new();
-        let slots: [(UpgradeSlot, fn(f64) -> Properties); 11] = [
+        let slots: [(UpgradeSlot, fn(f64) -> Properties); 12] = [
             (UpgradeSlot::Shield, |t: f64| Properties {
                 thermal_resistance: 3.0 + t * 0.9,
                 density: 10.0 - t * 0.4, // must get LIGHTER as tiers rise
@@ -229,6 +231,11 @@ impl Recipe {
             (UpgradeSlot::CargoHold, |t: f64| Properties {
                 tensile_strength: 2.0 + t * 0.6,
                 density: 8.0 - t * 0.3,
+                ..Default::default()
+            }),
+            (UpgradeSlot::CommandArray, |t: f64| Properties {
+                energy_conductivity: 2.5 + t * 0.6,
+                graviton_affinity: (t - 4.0).max(0.0) * 0.8, // deep range needs graviton tech
                 ..Default::default()
             }),
         ];
