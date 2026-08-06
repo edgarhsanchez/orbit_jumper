@@ -32,6 +32,18 @@ fn element_display(e: Element) -> (&'static str, &'static str) {
     }
 }
 
+/// One row of the galaxy map: a candidate destination.
+#[derive(Reflect, Clone, PartialEq, Default)]
+struct MapRowVm {
+    /// Sun label — the studied class, or "?" for the unknown.
+    name: String,
+    /// Distance and jump cost.
+    detail: String,
+    color: String,
+    /// Row index, passed back as the jump command's parameter.
+    param: String,
+}
+
 #[derive(Reflect, Default, Bindable)]
 struct HudVm {
     energy: f64,
@@ -52,6 +64,8 @@ struct HudVm {
     stash: Vec<StashVm>,
     achievements: Vec<StashVm>,
     feed: Vec<String>,
+    map: Vec<MapRowVm>,
+    map_status: String,
 }
 
 #[derive(Resource, Clone)]
@@ -68,17 +82,27 @@ impl Plugin for HudPlugin {
 
 fn toggle_panel(
     keys: Res<ButtonInput<KeyCode>>,
-    panel: Option<Res<VesselPanel>>,
+    vessel: Option<Res<VesselPanel>>,
+    map: Option<Res<MapPanel>>,
     mut vis: Query<&mut Visibility>,
 ) {
-    let Some(panel) = panel else { return };
+    let mut flip = |entity: bevy::prelude::Entity| {
+        if let Ok(mut v) = vis.get_mut(entity) {
+            *v = match *v {
+                Visibility::Hidden => Visibility::Inherited,
+                _ => Visibility::Hidden,
+            };
+        }
+    };
     if keys.just_pressed(KeyCode::Tab)
-        && let Ok(mut v) = vis.get_mut(panel.0)
+        && let Some(vessel) = vessel
     {
-        *v = match *v {
-            Visibility::Hidden => Visibility::Inherited,
-            _ => Visibility::Hidden,
-        };
+        flip(vessel.0);
+    }
+    if keys.just_pressed(KeyCode::KeyM)
+        && let Some(map) = map
+    {
+        flip(map.0);
     }
 }
 
@@ -105,7 +129,34 @@ const HUD_XAML: &str = r##"
   <TextBlock Text="{Binding best, StringFormat=best: {0}}" Foreground="#8A8F98"/>
   <TextBlock Text="{Binding salvage, StringFormat=salvage: {0}}" Foreground="#C9A96E"/>
   <TextBlock Text="{Binding upgrades}" Foreground="#7E97B8" Margin="0,4,0,0"/>
+  <TextBlock Text="[Tab] vessel  [M] galaxy map" Foreground="#5A5F68" Margin="0,4,0,0"/>
 </StackPanel>
+"##;
+
+const MAP_XAML: &str = r##"
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        HorizontalAlignment="Center" VerticalAlignment="Center"
+        Background="#D810141C" BorderBrush="#3A4552" BorderThickness="1"
+        CornerRadius="8" Padding="12" Width="420">
+  <StackPanel>
+    <TextBlock Text="GALAXY MAP" Foreground="#9FD0FF" FontSize="15"/>
+    <TextBlock Text="{Binding map_status}" Foreground="#C8E06E" Margin="0,4,0,6"/>
+    <ItemsControl ItemsSource="{Binding map}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+            <Ellipse Width="13" Height="13" Fill="{Binding color}"/>
+            <TextBlock Text="{Binding name}" Width="130" Margin="8,0,0,0"/>
+            <TextBlock Text="{Binding detail}" Width="170" Foreground="#8A8F98"/>
+            <Button Content="jump" Command="{Binding jump}" CommandParameter="{Binding param}"/>
+          </StackPanel>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+    <TextBlock Text="studied suns are labeled; ? is a gamble. [M] close" Foreground="#5A5F68" Margin="0,8,0,0"/>
+  </StackPanel>
+</Border>
 "##;
 
 const PANEL_XAML: &str = r##"
@@ -186,6 +237,10 @@ const PANEL_XAML: &str = r##"
 #[derive(Resource)]
 struct VesselPanel(Entity);
 
+/// Root entity of the galaxy map, for the M toggle.
+#[derive(Resource)]
+struct MapPanel(Entity);
+
 fn spawn_hud(mut commands: Commands) {
     let vm = Bindable::new(HudVm {
         energy: 100.0,
@@ -206,6 +261,8 @@ fn spawn_hud(mut commands: Commands) {
         stash: Vec::new(),
         achievements: Vec::new(),
         feed: Vec::new(),
+        map: Vec::new(),
+        map_status: String::new(),
     });
     // XAML button commands route into the world through the model.
     for (name, slot) in [
@@ -219,9 +276,31 @@ fn spawn_hud(mut commands: Commands) {
             crate::upgrades::buy_from_world(world, slot);
         });
     }
+    // The map's jump buttons pass their row index; the row list resource
+    // maps it back to a SystemId for `perform_jump` to consume.
+    vm.on_command("jump", |world, param| {
+        let Some(index) = param.and_then(|p| p.trim().parse::<usize>().ok()) else { return };
+        let target = world
+            .resource::<crate::travel::MapRows>()
+            .0
+            .get(index)
+            .copied();
+        if let Some(target) = target {
+            world.resource_mut::<crate::travel::PendingJump>().0 = Some(target);
+        }
+    });
     commands.insert_resource(HudModel(vm.clone()));
     commands.queue(move |world: &mut World| {
-        for (xaml, is_panel) in [(HUD_XAML, false), (PANEL_XAML, true)] {
+        enum Panel {
+            Hud,
+            Vessel,
+            Map,
+        }
+        for (xaml, panel) in [
+            (HUD_XAML, Panel::Hud),
+            (PANEL_XAML, Panel::Vessel),
+            (MAP_XAML, Panel::Map),
+        ] {
             let scene = bevy_pf::XamlScene::parse(xaml).expect("ui xaml is valid");
             let root = world.spawn(DataContext(vm.clone())).id();
             if let Err(e) = bevy_pf::instantiate_document(world, root, &scene.document()) {
@@ -229,14 +308,22 @@ fn spawn_hud(mut commands: Commands) {
             }
             // Instantiation replaces root components; re-attach the context.
             world.entity_mut(root).insert(DataContext(vm.clone()));
-            if is_panel {
-                world.entity_mut(root).insert(Visibility::Hidden);
-                world.insert_resource(VesselPanel(root));
+            match panel {
+                Panel::Hud => {}
+                Panel::Vessel => {
+                    world.entity_mut(root).insert(Visibility::Hidden);
+                    world.insert_resource(VesselPanel(root));
+                }
+                Panel::Map => {
+                    world.entity_mut(root).insert(Visibility::Hidden);
+                    world.insert_resource(MapPanel(root));
+                }
             }
         }
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_hud(
     model: Option<Res<HudModel>>,
     ships: Query<(&Ship, &crate::SimVel, &NavState)>,
@@ -250,6 +337,9 @@ fn update_hud(
     stash: Res<Stash>,
     achieved: Res<crate::achievements::Unlocked>,
     flash: Res<crate::achievements::LastUnlock>,
+    game: Res<crate::GameUniverse>,
+    atlas: Res<crate::travel::SunAtlas>,
+    mut map_rows: ResMut<crate::travel::MapRows>,
 ) {
     let (Some(model), Ok((ship, vel, nav))) = (model, ships.single()) else {
         return;
@@ -323,4 +413,40 @@ fn update_hud(
     if let Ok(sun) = suns.single() {
         model.0.set_sun_class(displayed_sun_class(sun.class, study.revealed));
     }
+
+    // Galaxy map: the six nearest systems, studied suns labeled from the
+    // atlas, priced by distance. Row order backs the jump parameter.
+    let nearby = crate::travel::nearby_systems(&game, 6);
+    map_rows.0 = nearby.iter().map(|(id, _)| *id).collect();
+    let rows: Vec<MapRowVm> = nearby
+        .iter()
+        .enumerate()
+        .map(|(i, (id, dist))| {
+            let cost = crate::travel::jump_cost(*dist);
+            let affordable = ship.energy >= cost;
+            let name = match atlas.0.get(id) {
+                Some(class) => format!("{class:?} sun"),
+                None => "? unstudied".into(),
+            };
+            MapRowVm {
+                name,
+                detail: format!("{:.1} ly — {:.0} energy", dist / crate::travel::LY, cost),
+                color: match (atlas.0.contains_key(id), affordable) {
+                    (_, false) => "#7A3A3A".into(),
+                    (true, true) => "#E0C36E".into(),
+                    (false, true) => "#3A4048".into(),
+                },
+                param: i.to_string(),
+            }
+        })
+        .collect();
+    model.0.set_map(rows);
+    model.0.set_map_status(format!(
+        "system {:?} of sector ({}, {}, {}) — energy {:.0}",
+        game.current.index,
+        game.current.sector.x,
+        game.current.sector.y,
+        game.current.sector.z,
+        ship.energy
+    ));
 }

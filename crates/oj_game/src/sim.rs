@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use oj_orbits::{KeplerOrbit, Vec3d, circular_speed, gravity_accel, integrate_step};
-use oj_universe::SunClass;
+use oj_universe::{SolarSystem, SunClass};
 
 use crate::{GameUniverse, SimPos, SimVel};
 
@@ -117,6 +117,11 @@ impl Default for Ship {
 #[derive(Component)]
 pub struct OriginAnchor;
 
+/// Everything owned by the current solar system — torn down by a jump,
+/// rebuilt by [`spawn_bodies`]. The ship, camera, and UI are NOT scoped.
+#[derive(Component)]
+pub struct SystemScoped;
+
 fn spawn_current_system(
     mut commands: Commands,
     game: Res<GameUniverse>,
@@ -127,10 +132,56 @@ fn spawn_current_system(
         error!("current system does not exist; universe misconfigured");
         return;
     };
+    spawn_bodies(&mut commands, &system, &mut meshes, &mut materials);
+
+    // The ship starts in a comfortable circular orbit of the sun.
+    let mu = oj_orbits::G * system.sun.mass;
+    let r = system
+        .planets
+        .first()
+        .map(|p| p.orbit.semi_major * 0.6)
+        .unwrap_or(1.0e11);
+    let v = circular_speed(mu, r);
+    commands.spawn((
+        Ship::default(),
+        crate::command::NavState::Free,
+        OriginAnchor,
+        SimPos(Vec3d::new(r, 0.0, 0.0)),
+        SimVel(Vec3d::new(0.0, v, 0.0)),
+        Mesh3d(meshes.add(Cone::new(6.0e7, 2.0e8).mesh().resolution(16))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.8, 0.85, 0.9),
+            metallic: 0.8,
+            ..default()
+        })),
+        Transform::default(),
+    ));
+
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(0.0, -1.2e9, 6.0e8).looking_at(Vec3::ZERO, Vec3::Z),
+    ));
+    info!(
+        "system {:?}: {:?} sun, {} planets",
+        game.current,
+        system.sun.class,
+        system.planets.len()
+    );
+}
+
+/// Spawn a system's celestial content: sun, planets, moons, ring debris.
+/// Deterministic per system id, so a revisited system looks the same.
+pub fn spawn_bodies(
+    commands: &mut Commands,
+    system: &SolarSystem,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
     let mu = oj_orbits::G * system.sun.mass;
 
     // Sun at the origin of the system-local frame.
     commands.spawn((
+        SystemScoped,
         SunBody {
             class: system.sun.class,
             hazard_radius: system.sun.hazard_radius,
@@ -170,10 +221,17 @@ fn spawn_current_system(
         base_color: Color::srgb(0.4, 0.38, 0.35),
         ..default()
     });
-    let mut debris_rng = oj_universe::SplitMix64(game.universe.seed ^ 0xDEB215);
+    let mut debris_rng = oj_universe::SplitMix64(
+        0xDEB215
+            ^ (system.id.index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (system.id.sector.x as u64).rotate_left(17)
+            ^ (system.id.sector.y as u64).rotate_left(34)
+            ^ (system.id.sector.z as u64).rotate_left(51),
+    );
     for (i, planet) in system.planets.iter().enumerate() {
         let planet_entity = commands
             .spawn((
+                SystemScoped,
                 OnRails(planet.orbit),
                 CelestialBody {
                     mu: oj_orbits::G * planet.mass,
@@ -195,6 +253,7 @@ fn spawn_current_system(
         // Moons: commandable bodies riding parented rails.
         for (m, moon) in planet.moons.iter().enumerate() {
             commands.spawn((
+                SystemScoped,
                 OnRailsAround { orbit: moon.orbit, parent: planet_entity },
                 CelestialBody {
                     mu: oj_orbits::G * moon.mass,
@@ -218,6 +277,7 @@ fn spawn_current_system(
         for _ in 0..count {
             let r = planet.radius.max(1.0e8) * debris_rng.range(4.0, 14.0);
             commands.spawn((
+                SystemScoped,
                 OnRailsAround {
                     orbit: KeplerOrbit {
                         mu: oj_orbits::G * planet.mass,
@@ -245,39 +305,6 @@ fn spawn_current_system(
             ));
         }
     }
-
-    // The ship starts in a comfortable circular orbit of the sun.
-    let r = system
-        .planets
-        .first()
-        .map(|p| p.orbit.semi_major * 0.6)
-        .unwrap_or(1.0e11);
-    let v = circular_speed(mu, r);
-    commands.spawn((
-        Ship::default(),
-        crate::command::NavState::Free,
-        OriginAnchor,
-        SimPos(Vec3d::new(r, 0.0, 0.0)),
-        SimVel(Vec3d::new(0.0, v, 0.0)),
-        Mesh3d(meshes.add(Cone::new(6.0e7, 2.0e8).mesh().resolution(16))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.8, 0.85, 0.9),
-            metallic: 0.8,
-            ..default()
-        })),
-        Transform::default(),
-    ));
-
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, -1.2e9, 6.0e8).looking_at(Vec3::ZERO, Vec3::Z),
-    ));
-    info!(
-        "system {:?}: {:?} sun, {} planets",
-        game.current,
-        system.sun.class,
-        system.planets.len()
-    );
 }
 
 fn place_celestials(clock: Res<SimClock>, mut bodies: Query<(&OnRails, &mut SimPos, &mut BodyVel)>) {

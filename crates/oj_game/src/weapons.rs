@@ -14,7 +14,8 @@ use oj_materials::UpgradeSlot;
 use oj_orbits::{Vec3d, gravity_accel};
 
 use crate::modules::{RunScore, Wreck};
-use crate::sim::{BodyVel, CelestialBody, DT, OnRails, Ship, TIME_WARP};
+use crate::sim::{BodyVel, CelestialBody, DT, OnRails, Ship, SystemScoped, TIME_WARP};
+use crate::travel::SystemChanged;
 use crate::upgrades::ShipUpgrades;
 use crate::{GameUniverse, SimPos, SimVel};
 
@@ -64,6 +65,7 @@ impl Plugin for WeaponsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Cooldowns>()
             .add_systems(Startup, spawn_drones)
+            .add_systems(Update, respawn_drones)
             .add_systems(
                 FixedUpdate,
                 (fire_weapons, fly_missiles, fly_drones, apply_wells, reap_hulls).chain(),
@@ -76,6 +78,30 @@ fn spawn_drones(
     game: Res<GameUniverse>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    spawn_drone_set(&mut commands, &game, &mut meshes, &mut materials);
+}
+
+/// A jump tears the old drones down with the rest of the system; fresh
+/// practice targets spawn on the new start ring.
+fn respawn_drones(
+    mut changed: MessageReader<SystemChanged>,
+    mut commands: Commands,
+    game: Res<GameUniverse>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if changed.read().next().is_none() {
+        return;
+    }
+    spawn_drone_set(&mut commands, &game, &mut meshes, &mut materials);
+}
+
+fn spawn_drone_set(
+    commands: &mut Commands,
+    game: &GameUniverse,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
 ) {
     let Some(system) = game.universe.system(game.current) else { return };
     let mu = oj_orbits::G * system.sun.mass;
@@ -99,6 +125,7 @@ fn spawn_drones(
         let v = (mu / radius).sqrt();
         let vel = Vec3d::new(-v * phase.sin(), v * phase.cos(), 0.0);
         commands.spawn((
+            SystemScoped,
             TargetDrone,
             Hull { hp: 30.0 },
             SimPos(pos),
@@ -111,6 +138,7 @@ fn spawn_drones(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fire_weapons(
     keys: Res<ButtonInput<KeyCode>>,
     mut cd: ResMut<Cooldowns>,
@@ -154,6 +182,7 @@ fn fire_weapons(
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .map(|(e, _)| e);
         commands.spawn((
+            SystemScoped,
             Missile {
                 target,
                 damage: 40.0 * 1.4f64.powi(missile_tier as i32 - 1),
@@ -178,6 +207,7 @@ fn fire_weapons(
             ship.energy -= 25.0;
             cd.well = WELL_COOLDOWN;
             commands.spawn((
+                SystemScoped,
                 ForceWell {
                     strength: sign * 8.0e14 * ff_tier as f64,
                     radius: 4.0e9,
@@ -312,6 +342,7 @@ fn reap_hulls(
         });
         for i in 0..2 {
             commands.spawn((
+                SystemScoped,
                 Wreck {
                     value: 15,
                     element: if i == 0 {

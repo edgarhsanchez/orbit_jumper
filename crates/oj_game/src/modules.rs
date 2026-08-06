@@ -9,7 +9,7 @@ use oj_materials::Element;
 use oj_orbits::Vec3d;
 use oj_universe::SunClass;
 
-use crate::sim::{DT, OriginAnchor, Ship, SimClock, SunBody, TIME_WARP};
+use crate::sim::{DT, OriginAnchor, Ship, SimClock, SunBody, SystemScoped, TIME_WARP};
 use crate::{GameUniverse, SimPos, SimVel};
 
 // ---------------------------------------------------------------------------
@@ -226,6 +226,7 @@ fn spawn_wrecks(
             // A dead hull scraps into structural metals.
             let element = if i % 2 == 0 { Element::Iron } else { Element::Titanium };
             commands.spawn((
+                SystemScoped,
                 Wreck { value: 20, element },
                 SimPos(death.at + offset),
                 Mesh3d(mesh.clone()),
