@@ -137,6 +137,8 @@ fn guide_nav(
         KeyCode::ArrowDown,
         KeyCode::ArrowLeft,
         KeyCode::ArrowRight,
+        KeyCode::KeyE,
+        KeyCode::KeyQ,
     ]) {
         *nav = NavState::Free;
         return;
@@ -222,6 +224,8 @@ fn track_assists(
         KeyCode::ArrowDown,
         KeyCode::ArrowLeft,
         KeyCode::ArrowRight,
+        KeyCode::KeyE,
+        KeyCode::KeyQ,
     ]);
     let speed = vel.0.length();
     // Deepest finite-SOI body containing the ship (planets, not the sun).

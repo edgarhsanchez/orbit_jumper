@@ -521,7 +521,7 @@ pub fn spawn_bodies(
                         mu: oj_orbits::G * planet.mass,
                         semi_major: r,
                         eccentricity: debris_rng.range(0.0, 0.1),
-                        inclination: debris_rng.range(-0.15, 0.15),
+                        inclination: debris_rng.range(-0.4, 0.4),
                         raan: debris_rng.range(0.0, std::f64::consts::TAU),
                         arg_periapsis: 0.0,
                         mean_anomaly_epoch: debris_rng.range(0.0, std::f64::consts::TAU),
@@ -762,12 +762,15 @@ pub fn restyle_ship(world: &mut World) {
     }
 }
 
-/// Point the hull along the velocity vector (the cone's +Y is forward).
+/// Point the hull along the velocity vector in FULL 3D (the cone's +Y
+/// is forward): yaw follows the in-plane heading, pitch follows climbs
+/// and dives — vertical burns visibly raise the nose.
 fn orient_ship(mut ships: Query<(&SimVel, &mut Transform), With<Ship>>) {
     for (vel, mut transform) in &mut ships {
         if vel.0.length() > 1.0 {
-            let angle = (vel.0.y).atan2(vel.0.x) as f32 - std::f32::consts::FRAC_PI_2;
-            transform.rotation = Quat::from_rotation_z(angle);
+            let dir = vel.0.normalized();
+            let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
+            transform.rotation = Quat::from_rotation_arc(Vec3::Y, dir);
         }
     }
 }
@@ -784,6 +787,8 @@ fn flame_visibility(
         KeyCode::ArrowDown,
         KeyCode::ArrowLeft,
         KeyCode::ArrowRight,
+        KeyCode::KeyE,
+        KeyCode::KeyQ,
     ]);
     let burning = ship.energy > 0.0
         && (thrusting || matches!(nav, crate::command::NavState::Transfer { .. }));
@@ -907,10 +912,14 @@ fn ship_controls(
         Ok(s) => s,
         Err(_) => return,
     };
-    let thrusting = keys.pressed(KeyCode::ArrowUp)
-        || keys.pressed(KeyCode::ArrowDown)
-        || keys.pressed(KeyCode::ArrowLeft)
-        || keys.pressed(KeyCode::ArrowRight);
+    let thrusting = keys.any_pressed([
+        KeyCode::ArrowUp,
+        KeyCode::ArrowDown,
+        KeyCode::ArrowLeft,
+        KeyCode::ArrowRight,
+        KeyCode::KeyE,
+        KeyCode::KeyQ,
+    ]);
     if thrusting {
         ship.energy = (ship.energy - 4.0 * DT * TIME_WARP / 60.0).max(0.0);
     }
@@ -935,7 +944,11 @@ fn integrate_ships(
             // radial on left/right. Scaled by warp so it stays effective.
             let prograde = vel.0.normalized();
             let radial = (pos.0 - sun_pos.0).normalized();
-            let t = ship.thrust * TIME_WARP;
+            // Balance: full warp scaling burned thousands of km/s in
+            // seconds (measured 37,000 km/s from a 4 s burn). This
+            // factor lands at ~45 km/s per real second at base thrust —
+            // decisive against ~25 km/s orbits without deleting them.
+            let t = ship.thrust * TIME_WARP * 0.005;
             if keys.pressed(KeyCode::ArrowUp) {
                 accel += prograde * t;
             }
@@ -947,6 +960,15 @@ fn integrate_ships(
             }
             if keys.pressed(KeyCode::ArrowRight) {
                 accel += radial * t;
+            }
+            // Out-of-plane: E climbs above the ecliptic, Q dives below.
+            // Space is a volume, not a board.
+            let up = oj_orbits::Vec3d::new(0.0, 0.0, 1.0);
+            if keys.pressed(KeyCode::KeyE) {
+                accel += up * t;
+            }
+            if keys.pressed(KeyCode::KeyQ) {
+                accel += -up * t;
             }
         }
         let dt = DT * TIME_WARP;

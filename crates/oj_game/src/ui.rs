@@ -89,6 +89,7 @@ struct HudVm {
     level: String,
     style: String,
     threat: String,
+    heading: String,
 }
 
 #[derive(Resource, Clone)]
@@ -284,7 +285,7 @@ const HUD_XAML: &str = r##"
     </StackPanel>
   </Border>
 
-  <TextBlock Text="[TAB] VESSEL  [M] MAP  [S] STUDY  [F] COCKPIT" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
+  <TextBlock Text="[TAB] VESSEL  [M] MAP  [S] STUDY  [F] COCKPIT  [E/Q] VERT" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
 </StackPanel>
 "##;
 
@@ -369,9 +370,48 @@ const PANEL_XAML: &str = r##"
 </Border>
 "##;
 
-// Cockpit HUD: flight-critical only — bars, nav, velocity, threat.
-// Sensors (sun class), meta (score/pilot) and management (yard, map,
-// study) belong to the tactical overview.
+// Cockpit docs (Stitch screen 'HUD: Cockpit View', project
+// 8423485048351977019): bars top-left, heading tape top-center, threat
+// chip top-right, reticle center, console strip bottom. Sensors, meta
+// and management stay in the tactical overview.
+const COCKPIT_TAPE_XAML: &str = r##"
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,10,0,0"
+        Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="14,4">
+  <TextBlock Text="{Binding heading}" Foreground="#00E5FF" FontSize="12"/>
+</Border>
+"##;
+
+const COCKPIT_RETICLE_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            HorizontalAlignment="Center" VerticalAlignment="Center">
+  <Ellipse Width="54" Height="54" Stroke="#8000E5FF" StrokeThickness="1" Fill="#00000000"/>
+</StackPanel>
+"##;
+
+const COCKPIT_THREAT_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,10,12,0">
+  <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="11"/>
+</StackPanel>
+"##;
+
+const COCKPIT_CONSOLE_XAML: &str = r##"
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,8"
+        Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="18,6">
+  <StackPanel>
+    <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="16" FontWeight="Bold"
+               HorizontalAlignment="Center"/>
+    <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10" Margin="0,2,0,0"/>
+  </StackPanel>
+</Border>
+"##;
+
 const HUD_COCKPIT_XAML: &str = r##"
 <StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -399,14 +439,7 @@ const HUD_COCKPIT_XAML: &str = r##"
                    Foreground="#FF7043" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
     </StackPanel>
   </Border>
-  <Border Background="#F00D131C" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,8" Width="236" Margin="0,8,0,0">
-    <StackPanel>
-      <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10"/>
-      <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="10"/>
-      <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="17" FontWeight="Bold" Margin="0,4,0,0"/>
-    </StackPanel>
-  </Border>
-  <TextBlock Text="[F] TACTICAL   [Z] LASER  [X] MSL  [C/V] WELLS" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
+  <TextBlock Text="[F] TACTICAL  [E/Q] VERT  [Z] LASER  [X] MSL  [C/V] WELLS" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
 </StackPanel>
 "##;
 
@@ -499,6 +532,12 @@ const TOUCH_THRUST_XAML: &str = r##"
     <Button x:Name="btn_right" Content="OUT" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
             Foreground="#00FFD4" FontSize="13" Padding="0,14"/>
   </StackPanel>
+  <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_climb" Content="VERT+" Width="66" Background="#D80B1B22" BorderBrush="#B48CFF"
+            Foreground="#B48CFF" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
+    <Button x:Name="btn_dive" Content="VERT-" Width="66" Background="#D80B1B22" BorderBrush="#B48CFF"
+            Foreground="#B48CFF" FontSize="13" Padding="0,14"/>
+  </StackPanel>
 </StackPanel>
 "##;
 
@@ -522,8 +561,10 @@ const TOUCH_WEAPONS_XAML: &str = r##"
 "##;
 
 /// btn_* name -> virtual key, for wiring TouchKey after instantiation.
-const TOUCH_KEYS: [(&str, KeyCode); 12] = [
+const TOUCH_KEYS: [(&str, KeyCode); 14] = [
     ("btn_view", KeyCode::KeyF),
+    ("btn_climb", KeyCode::KeyE),
+    ("btn_dive", KeyCode::KeyQ),
     ("btn_vessel", KeyCode::Tab),
     ("btn_map", KeyCode::KeyM),
     ("btn_study", KeyCode::KeyS),
@@ -698,7 +739,17 @@ fn relayout_ui(world: &mut World) {
     let mut docs = if cockpit {
         world.remove_resource::<VesselPanel>();
         world.remove_resource::<MapPanel>();
-        vec![(m.fill(HUD_COCKPIT_XAML), Doc::Hud)]
+        // The cockpit console is a control surface on every device —
+        // the Stitch design puts thrust and weapons ON the console.
+        vec![
+            (m.fill(HUD_COCKPIT_XAML), Doc::Hud),
+            (m.fill(COCKPIT_TAPE_XAML), Doc::Hud),
+            (m.fill(COCKPIT_RETICLE_XAML), Doc::Hud),
+            (m.fill(COCKPIT_THREAT_XAML), Doc::Hud),
+            (m.fill(COCKPIT_CONSOLE_XAML), Doc::Hud),
+            (m.fill(TOUCH_THRUST_XAML), Doc::Controls),
+            (m.fill(TOUCH_WEAPONS_XAML), Doc::Controls),
+        ]
     } else {
         vec![
             (m.fill(HUD_XAML), Doc::Hud),
@@ -709,8 +760,10 @@ fn relayout_ui(world: &mut World) {
     if m.touch_controls {
         let topbar = if cockpit { TOUCH_TOPBAR_COCKPIT_XAML } else { TOUCH_TOPBAR_XAML };
         docs.push((m.fill(topbar), Doc::Controls));
-        docs.push((m.fill(TOUCH_THRUST_XAML), Doc::Controls));
-        docs.push((m.fill(TOUCH_WEAPONS_XAML), Doc::Controls));
+        if !cockpit {
+            docs.push((m.fill(TOUCH_THRUST_XAML), Doc::Controls));
+            docs.push((m.fill(TOUCH_WEAPONS_XAML), Doc::Controls));
+        }
     }
     for (xaml, doc) in docs {
         let scene = bevy_pf::XamlScene::parse(&xaml).expect("ui xaml is valid");
@@ -807,6 +860,8 @@ fn update_hud(
         nav_text
     });
     model.0.set_speed(format!("{:.1} KM/S", vel.0.length() / 1000.0));
+    let hdg = (90.0 - vel.0.y.atan2(vel.0.x).to_degrees()).rem_euclid(360.0);
+    model.0.set_heading(format!("<<  HDG {hdg:03.0}\u{00B0}  >>"));
     // Equality-checked setters: an unchanged readout costs nothing downstream.
     model.0.set_energy((ship.energy / ship.energy_max * 100.0).round());
     model.0.set_shield(ship.shield.round());
