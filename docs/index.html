@@ -62,10 +62,47 @@
     // 1x is what makes the game playable on iOS/Android at all.
     Object.defineProperty(window, 'devicePixelRatio', { get: () => 1 });
   </script>
+  <script>
+    // Browsers gate WebAudio behind the first user gesture: the game's
+    // AudioContext is born SUSPENDED, and the audio backend in the wasm
+    // (cpal/rodio) never calls resume() itself — measured on the live
+    // site: three clicks and a keypress left the context suspended and
+    // the game silent forever. So the page owns the unlock: wrap the
+    // AudioContext constructor to capture every instance the wasm
+    // creates, and resume them on the first real gesture. Listeners
+    // stay armed (capture phase, so the canvas can't swallow them)
+    // until every context reports running.
+    (() => {
+      const ctxs = [];
+      for (const name of ['AudioContext', 'webkitAudioContext']) {
+        const Orig = window[name];
+        if (!Orig) continue;
+        const Wrapped = function (...args) {
+          const ctx = new Orig(...args);
+          ctxs.push(ctx);
+          return ctx;
+        };
+        Wrapped.prototype = Orig.prototype;
+        window[name] = Wrapped;
+      }
+      const events = ['pointerdown', 'touchend', 'mousedown', 'keydown', 'click'];
+      const resume = () => {
+        let allRunning = ctxs.length > 0;
+        for (const c of ctxs) {
+          if (c.state === 'suspended') c.resume();
+          if (c.state !== 'running') allRunning = false;
+        }
+        if (allRunning) {
+          for (const ev of events) removeEventListener(ev, resume, true);
+        }
+      };
+      for (const ev of events) addEventListener(ev, resume, true);
+    })();
+  </script>
   <script type="module">
     import init from './oj_game.js';
-    // iOS Safari: audio/context unlock and first-tap quirks are avoided
-    // by starting immediately; bevy binds to #game and tracks its size.
+    // bevy binds to #game and tracks its size; the audio unlock above
+    // handles the browser gesture gate.
     init().catch((e) => {
       // A thrown "Using exceptions for control flow" is winit's normal
       // wasm main-loop trampoline, not an error.
