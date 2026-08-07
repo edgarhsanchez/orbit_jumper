@@ -1812,7 +1812,7 @@ fn update_hud(
     } else {
         format!("LVL {level}")
     });
-    model.0.set_salvage(format!("{} CR", run.salvage_value));
+    model.0.set_salvage(format!("{} CR", run.salvage_balance()));
 
     model.0.set_style(style_res.label());
     let raiders = raider_q.iter().count();
@@ -1917,7 +1917,8 @@ fn update_hud(
         run.skill_points
     ));
     // Hull repair sits above the upgrade list: maintenance, not
-    // engineering — metals only, no skill points.
+    // engineering — it spends the salvage credits the HUD shows, no
+    // materials, no skill points. What is shown is what can be spent.
     let missing = 100.0 - ship.hull;
     if missing < 0.5 {
         model.0.set_repair_line("HULL 100/100 — NOMINAL".into());
@@ -1925,16 +1926,12 @@ fn update_hud(
     } else {
         let cost = crate::upgrades::repair_cost(missing);
         model.0.set_repair_line(format!(
-            "HULL {:.0}/100 — PATCH: {}",
+            "HULL {:.0}/100 — PATCH: {} CR ({} CR BANKED)",
             ship.hull,
-            cost.iter()
-                .map(|(e, n)| format!("{n} {}", element_display(*e).0))
-                .collect::<Vec<_>>()
-                .join(" · ")
+            cost,
+            run.salvage_balance()
         ));
-        let affordable = cost
-            .iter()
-            .all(|(e, n)| stash.0.get(e).copied().unwrap_or(0) >= *n);
+        let affordable = run.salvage_balance() >= cost;
         model.0.set_repair_color(if affordable { "#7CFFB0" } else { "#FF8A50" }.into());
     }
     let rows: Vec<UpgradeRowVm> = CRAFT_SLOTS
@@ -1961,15 +1958,22 @@ fn update_hud(
         .collect();
     model.0.set_rows(rows);
 
-    let mut chips: Vec<StashVm> = stash
-        .0
-        .iter()
-        .map(|(e, n)| {
-            let (sym, color) = element_display(*e);
-            StashVm { name: format!("{sym}: {n}"), color: color.into() }
-        })
-        .collect();
-    chips.sort_by(|a, b| a.name.cmp(&b.name));
+    // Every element gets a chip, zeros included — a recipe's shortfall
+    // must be readable as "ICE: 0", not as a missing chip.
+    let chips: Vec<StashVm> = {
+        use oj_materials::Element as E;
+        [E::Iron, E::Titanium, E::Silicon, E::Carbon, E::Ice, E::Uranium, E::Aetherite]
+            .iter()
+            .map(|e| {
+                let n = stash.0.get(e).copied().unwrap_or(0);
+                let (sym, color) = element_display(*e);
+                StashVm {
+                    name: format!("{sym}: {n}"),
+                    color: if n > 0 { color.into() } else { "#3A4450".into() },
+                }
+            })
+            .collect()
+    };
     model.0.set_stash(chips);
 
     let medals: Vec<MedalVm> = crate::achievements::Achievement::ALL

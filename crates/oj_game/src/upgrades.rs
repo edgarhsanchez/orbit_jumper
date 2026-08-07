@@ -68,46 +68,44 @@ pub fn can_afford(slot: UpgradeSlot, next_tier: u8, stash: &Stash, skill_points:
             .all(|(e, n)| stash.0.get(e).copied().unwrap_or(0) >= *n)
 }
 
-/// Materials to patch `missing` points of hull: structural metals only —
-/// repair is maintenance, not engineering, so it costs no skill points.
-pub fn repair_cost(missing: f64) -> [(Element, u32); 2] {
-    let m = (missing.ceil() as u32).max(1);
-    [(Element::Iron, m.div_ceil(10)), (Element::Titanium, m.div_ceil(20))]
+/// Salvage credits per point of missing hull. Repair is maintenance,
+/// not engineering: it costs the CR the tractor hauls in — the number
+/// the HUD's SALVAGE readout shows — never materials or skill points.
+pub const REPAIR_CR_PER_POINT: u64 = 2;
+
+/// Credits to patch `missing` points of hull.
+pub fn repair_cost(missing: f64) -> u64 {
+    (missing.ceil() as u64).max(1) * REPAIR_CR_PER_POINT
 }
 
-/// Patch the hull back to full out of the stash. No-op when the hull is
-/// whole or the metals are short — all or nothing, like crafting.
-pub fn try_repair(stash: &mut Stash, ship: &mut Ship) -> bool {
+/// Patch the hull back to full out of the run's salvage balance. No-op
+/// when the hull is whole or the credits are short — all or nothing,
+/// like crafting. Spending never lowers score: the score term is
+/// credits EARNED, and this only moves the spent counter.
+pub fn try_repair(run: &mut RunScore, ship: &mut Ship) -> bool {
     let missing = 100.0 - ship.hull;
     if missing < 0.5 {
         return false;
     }
     let cost = repair_cost(missing);
-    if !cost.iter().all(|(e, n)| stash.0.get(e).copied().unwrap_or(0) >= *n) {
+    if run.salvage_balance() < cost {
         return false;
     }
-    for (element, n) in cost {
-        if let Some(have) = stash.0.get_mut(&element) {
-            *have -= n;
-        }
-    }
+    run.salvage_spent += cost;
     ship.hull = 100.0;
-    info!("hull repaired");
+    info!("hull repaired for {cost} CR ({} CR left)", run.salvage_balance());
     true
 }
 
 /// Repair from an exclusive-world context — the vessel panel's REPAIR
-/// button.
+/// button. Salvage credits are run currency, not persisted, so there is
+/// nothing to save here.
 pub fn repair_from_world(world: &mut World) {
-    world.resource_scope(|world, mut stash: Mut<Stash>| {
-        world.resource_scope(|world, upgrades: Mut<ShipUpgrades>| {
-            let mut ships = world.query::<&mut Ship>();
-            if let Ok(mut ship) = ships.single_mut(world)
-                && try_repair(&mut stash, &mut ship)
-            {
-                save_loadout(&upgrades, &stash);
-            }
-        });
+    world.resource_scope(|world, mut run: Mut<RunScore>| {
+        let mut ships = world.query::<&mut Ship>();
+        if let Ok(mut ship) = ships.single_mut(world) {
+            try_repair(&mut run, &mut ship);
+        }
     });
 }
 
@@ -238,9 +236,8 @@ fn buy_upgrades(
     // 9: patch the hull (the panel's REPAIR button, as a key).
     if keys.just_pressed(KeyCode::Digit9)
         && let Ok(mut ship) = ships.single_mut()
-        && try_repair(&mut stash, &mut ship)
+        && try_repair(&mut run, &mut ship)
     {
-        save_loadout(&upgrades, &stash);
         sfx.write(crate::audio::Sfx::Salvage);
     }
 }
@@ -406,5 +403,37 @@ mod tests {
         assert!(!try_craft(&mut upgrades, &mut stash, &mut run, slot));
         assert_eq!(stash.0[&a], 3);
         assert_eq!(run.skill_points, 2 - CRAFT_POINT_COST);
+    }
+
+    /// The repair contract: a patch spends the salvage credits the HUD
+    /// shows — or nothing — and spending never lowers score or rank.
+    /// (Regression: repair used to want stash metals while the UI
+    /// headlined an unspendable CR number; 600 CR could not buy a patch.)
+    #[test]
+    fn repair_spends_salvage_credits_or_nothing() {
+        let mut run = RunScore::default();
+        let mut ship = Ship::default();
+        ship.hull = 40.0;
+
+        // Short balance: no-op, nothing spent.
+        run.salvage_value = 10;
+        assert!(!try_repair(&mut run, &mut ship));
+        assert_eq!(ship.hull, 40.0);
+        assert_eq!(run.salvage_balance(), 10);
+
+        // Funded (the reported scenario — 600 CR banked): patch to full,
+        // spend exactly the shown cost, score unmoved.
+        run.salvage_value = 600;
+        let score_before = run.total();
+        let cost = repair_cost(100.0 - ship.hull);
+        assert!(cost <= 600, "600 CR must always cover a full patch");
+        assert!(try_repair(&mut run, &mut ship));
+        assert_eq!(ship.hull, 100.0);
+        assert_eq!(run.salvage_balance(), 600 - cost);
+        assert_eq!(run.total(), score_before, "repair must not move score");
+
+        // Whole hull: no-op regardless of balance.
+        assert!(!try_repair(&mut run, &mut ship));
+        assert_eq!(run.salvage_balance(), 600 - cost);
     }
 }

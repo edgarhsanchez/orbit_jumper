@@ -65,7 +65,13 @@ pub struct RunScore {
     pub seconds_survived: f64,
     pub energy_harvested: f64,
     pub suns_survived: u32,
+    /// Salvage credits EARNED this run — the score term. Monotone: it
+    /// only climbs, so spending credits never lowers score or rank.
     pub salvage_value: u64,
+    /// Salvage credits spent (hull patches). The spendable balance is
+    /// `salvage_balance()`; the HUD shows that, and what it shows is
+    /// exactly what can be spent.
+    pub salvage_spent: u64,
     /// Clean gravity assists flown (SOI transit, no thrust, net speed gain).
     pub assists: u32,
     /// Hostiles destroyed (count; the VALUE of each kill goes to
@@ -102,6 +108,11 @@ impl RunScore {
 
     pub fn score_hit(&mut self) {
         self.hits += 1;
+    }
+
+    /// Spendable salvage credits: earned minus spent.
+    pub fn salvage_balance(&self) -> u64 {
+        self.salvage_value.saturating_sub(self.salvage_spent)
     }
 }
 
