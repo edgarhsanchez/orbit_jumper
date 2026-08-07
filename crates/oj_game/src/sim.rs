@@ -143,15 +143,19 @@ pub enum ViewMode {
     Cockpit,
 }
 
-/// Camera state: tactical zoom persists across mode flips.
+/// Camera state: tactical zoom and viewing angle persist across mode
+/// flips. `pitch` is elevation above the orbital plane, radians —
+/// steep is map-like, shallow is the cinematic skim the screenshots
+/// show.
 #[derive(Resource)]
 pub struct CameraRig {
     pub zoom: f32,
+    pub pitch: f32,
 }
 
 impl Default for CameraRig {
     fn default() -> Self {
-        Self { zoom: 600.0 }
+        Self { zoom: 600.0, pitch: 1.0 }
     }
 }
 
@@ -1071,6 +1075,12 @@ fn camera_zoom(
         let factor = 3.0f32.powf(time.delta_secs() * held as f32);
         rig.zoom = (rig.zoom * factor).clamp(160.0, ceiling);
     }
+    // [ and ] tilt the view: from a near-top-down map to a shallow
+    // cinematic skim over the orbital plane.
+    let tilt = keys.pressed(KeyCode::BracketRight) as i8 - keys.pressed(KeyCode::BracketLeft) as i8;
+    if tilt != 0 {
+        rig.pitch = (rig.pitch + tilt as f32 * time.delta_secs() * 0.9).clamp(0.30, 1.50);
+    }
 }
 
 /// F flips between the tactical overview and the cockpit.
@@ -1107,7 +1117,8 @@ fn drive_camera(
     let target = match *view {
         ViewMode::Tactical => {
             let z = rig.zoom;
-            Transform::from_translation(Vec3::new(0.0, -z * 0.55, z * 0.85))
+            let (sin_p, cos_p) = rig.pitch.sin_cos();
+            Transform::from_translation(Vec3::new(0.0, -z * cos_p, z * sin_p))
                 .looking_at(Vec3::ZERO, Vec3::Z)
         }
         ViewMode::Cockpit => {

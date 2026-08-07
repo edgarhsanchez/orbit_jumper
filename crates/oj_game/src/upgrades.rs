@@ -60,9 +60,9 @@ pub fn material_cost(slot: UpgradeSlot, tier: u8) -> [(Element, u32); 2] {
     [(a, 2 + t), (b, 1 + t.div_ceil(2))]
 }
 
-/// Can the stash and the bank cover crafting the next tier of `slot`?
-pub fn can_afford(slot: UpgradeSlot, next_tier: u8, stash: &Stash, career: &CareerScore) -> bool {
-    career.skill_points >= CRAFT_POINT_COST
+/// Can the stash and this run's point bank cover the next tier of `slot`?
+pub fn can_afford(slot: UpgradeSlot, next_tier: u8, stash: &Stash, skill_points: u32) -> bool {
+    skill_points >= CRAFT_POINT_COST
         && material_cost(slot, next_tier)
             .iter()
             .all(|(e, n)| stash.0.get(e).copied().unwrap_or(0) >= *n)
@@ -186,23 +186,23 @@ impl Plugin for UpgradesPlugin {
 /// Reaching a new pilot level banks skill points — the level-up IS the
 /// reward: points buy gear tiers outright, no salvage needed.
 fn award_level_points(
-    run: Res<RunScore>,
-    mut career: ResMut<CareerScore>,
+    mut run: ResMut<RunScore>,
     mut flash: ResMut<crate::achievements::LastUnlock>,
     mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
-    let level = pilot_level(career.total_score + run.total());
-    let points = points_due(career.level_seen, level);
+    // Rank is PER-RUN: level comes from this run's score alone, so every
+    // restart — death or relaunch — starts back at level 1.
+    let level = pilot_level(run.total());
+    let points = points_due(run.level_seen, level);
     if points == 0 {
         return;
     }
-    career.skill_points += points;
-    career.level_seen = level;
-    career.save();
+    run.skill_points += points;
+    run.level_seen = level;
     flash.text = format!("LEVEL {level} — +{points} SKILL POINTS · [TAB] SPEND");
     flash.ttl = 6.0;
     sfx.write(crate::audio::Sfx::OrbitLock);
-    info!("level up: {level}, +{points} skill points ({} banked)", career.skill_points);
+    info!("level up: {level}, +{points} skill points ({} banked)", run.skill_points);
 }
 
 /// Digits 1-8 craft the next tier of each slot from the stash + one
@@ -212,7 +212,7 @@ fn buy_upgrades(
     keys: Res<ButtonInput<KeyCode>>,
     mut upgrades: ResMut<ShipUpgrades>,
     mut stash: ResMut<Stash>,
-    mut career: ResMut<CareerScore>,
+    mut run: ResMut<RunScore>,
     mut ships: Query<&mut Ship>,
     mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
@@ -227,8 +227,7 @@ fn buy_upgrades(
         (KeyCode::Digit8, UpgradeSlot::ForceFieldProjector),
     ];
     for (key, slot) in picks {
-        if keys.just_pressed(key) && try_craft(&mut upgrades, &mut stash, &mut career, slot) {
-            career.save();
+        if keys.just_pressed(key) && try_craft(&mut upgrades, &mut stash, &mut run, slot) {
             save_loadout(&upgrades, &stash);
             if let Ok(mut ship) = ships.single_mut() {
                 upgrades.apply(&mut ship);
@@ -253,13 +252,13 @@ fn buy_upgrades(
 fn try_craft(
     upgrades: &mut ShipUpgrades,
     stash: &mut Stash,
-    career: &mut CareerScore,
+    run: &mut RunScore,
     slot: UpgradeSlot,
 ) -> bool {
     // Tier 255 is the hard ceiling of the u8 — refusing here beats
     // wrapping a maxed slot back to zero while still taking payment.
     let Some(next) = upgrades.tier(slot).checked_add(1) else { return false };
-    if !can_afford(slot, next, stash, career) {
+    if !can_afford(slot, next, stash, run.skill_points) {
         return false;
     }
     for (element, n) in material_cost(slot, next) {
@@ -267,7 +266,7 @@ fn try_craft(
             *have -= n;
         }
     }
-    career.skill_points -= CRAFT_POINT_COST;
+    run.skill_points -= CRAFT_POINT_COST;
     upgrades.tiers.insert(slot, next);
     info!("crafted {slot:?} tier {next}");
     true
@@ -278,9 +277,8 @@ fn try_craft(
 pub fn buy_from_world(world: &mut World, slot: UpgradeSlot) {
     world.resource_scope(|world, mut upgrades: Mut<ShipUpgrades>| {
         world.resource_scope(|world, mut stash: Mut<Stash>| {
-            world.resource_scope(|world, mut career: Mut<CareerScore>| {
-                if try_craft(&mut upgrades, &mut stash, &mut career, slot) {
-                    career.save();
+            world.resource_scope(|world, mut run: Mut<RunScore>| {
+                if try_craft(&mut upgrades, &mut stash, &mut run, slot) {
                     save_loadout(&upgrades, &stash);
                     let mut ships = world.query::<&mut Ship>();
                     if let Ok(mut ship) = ships.single_mut(world) {
@@ -300,6 +298,12 @@ fn dev_salvage(mut run: ResMut<RunScore>, mut stash: ResMut<Stash>) {
         && let Ok(v) = v.parse::<u64>()
     {
         run.salvage_value = v;
+    }
+    if let Ok(v) = std::env::var("OJ_SP")
+        && let Ok(v) = v.parse::<u32>()
+    {
+        run.skill_points = v;
+        run.level_seen = 99; // no fanfare over the seeded points
     }
     if let Ok(v) = std::env::var("OJ_STASH")
         && let Ok(v) = v.parse::<u32>()
@@ -376,31 +380,31 @@ mod tests {
     fn crafting_spends_materials_and_points_or_nothing() {
         let mut upgrades = ShipUpgrades::default();
         let mut stash = Stash::default();
-        let mut career = CareerScore::default();
+        let mut run = RunScore::default();
         let slot = UpgradeSlot::Shield; // recipe: Titanium + Ice
         let [(a, na), (b, nb)] = material_cost(slot, 1);
 
         // No materials, no points: nothing happens.
-        assert!(!try_craft(&mut upgrades, &mut stash, &mut career, slot));
+        assert!(!try_craft(&mut upgrades, &mut stash, &mut run, slot));
         assert_eq!(upgrades.tier(slot), 0);
 
         // Materials but no points: still nothing.
         stash.0.insert(a, na + 3);
         stash.0.insert(b, nb + 1);
-        assert!(!try_craft(&mut upgrades, &mut stash, &mut career, slot));
+        assert!(!try_craft(&mut upgrades, &mut stash, &mut run, slot));
         assert_eq!(upgrades.tier(slot), 0);
 
         // Both: the craft lands and spends exactly the recipe + 1 point.
-        career.skill_points = 2;
-        assert!(try_craft(&mut upgrades, &mut stash, &mut career, slot));
+        run.skill_points = 2;
+        assert!(try_craft(&mut upgrades, &mut stash, &mut run, slot));
         assert_eq!(upgrades.tier(slot), 1);
         assert_eq!(stash.0[&a], 3, "primary spent exactly");
         assert_eq!(stash.0[&b], 1, "secondary spent exactly");
-        assert_eq!(career.skill_points, 2 - CRAFT_POINT_COST);
+        assert_eq!(run.skill_points, 2 - CRAFT_POINT_COST);
 
         // Tier 2 costs more than the leftovers: no partial spend.
-        assert!(!try_craft(&mut upgrades, &mut stash, &mut career, slot));
+        assert!(!try_craft(&mut upgrades, &mut stash, &mut run, slot));
         assert_eq!(stash.0[&a], 3);
-        assert_eq!(career.skill_points, 2 - CRAFT_POINT_COST);
+        assert_eq!(run.skill_points, 2 - CRAFT_POINT_COST);
     }
 }

@@ -144,7 +144,7 @@ fn spawn_raiders(
     clock.0 = SPAWN_PERIOD;
     let Ok((ship_pos, ship_vel)) = ships.single() else { return };
 
-    let level = pilot_level(career.total_score + run.total());
+    let level = pilot_level(run.total());
 
     // Arrive from a seed-random bearing, well outside weapons range,
     // velocity matched so the approach is deliberate, not a flyby.

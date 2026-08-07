@@ -75,6 +75,11 @@ pub struct RunScore {
     /// enemy is worth proportionally more, so leveling is paced by what
     /// you can defeat, not by how long you idle.
     pub combat_score: u64,
+    /// Skill points banked THIS RUN. The pilot's rank is per-run: every
+    /// restart returns to level 1, and unspent points die with the hull.
+    pub skill_points: u32,
+    /// Highest level already paid this run.
+    pub level_seen: u32,
     hits: u32,
     /// Last-seen ship energy, for attributing positive deltas to harvest.
     last_energy: Option<f64>,
@@ -107,11 +112,10 @@ pub struct CareerScore {
     pub total_score: u64,
     pub runs: u32,
     pub ships_lost: u32,
-    /// Unspent skill points, banked on level-up and spent on gear tiers.
-    /// `serde(default)` keeps pre-skill-point save files loading.
+    /// LEGACY, unused: rank went per-run (level 1 on every restart), so
+    /// points now live on RunScore. Kept so old save files still parse.
     #[serde(default)]
     pub skill_points: u32,
-    /// Highest pilot level already paid out, so a level pays exactly once.
     #[serde(default)]
     pub level_seen: u32,
 }

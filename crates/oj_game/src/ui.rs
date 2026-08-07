@@ -1303,7 +1303,7 @@ const DEATH_XAML: &str = r##"
     <TextBlock Text="VESSEL DESTROYED" Foreground="#FF5459" FontSize="20"/>
     <Rectangle Width="378" Height="1" Fill="#FF5459" Margin="0,8,0,10" HorizontalAlignment="Left"/>
     <TextBlock Text="{Binding death_stats}" Foreground="#E0E2EB" FontSize="12"/>
-    <TextBlock Text="THE HULL IS LOST. THE PILOT IS NOT: GEAR, STASH AND CAREER SURVIVE."
+    <TextBlock Text="HULL AND RANK ARE LOST — A NEW RUN STARTS AT LEVEL 1. GEAR, STASH AND CAREER RECORDS SURVIVE."
                Foreground="#5A6472" FontSize="10" Margin="0,8,0,0"/>
     <Button Content="START OVER" Command="restart" Margin="0,14,0,0"
             Background="#1A0E12" BorderBrush="#FF5459" Foreground="#FF5459"
@@ -1756,9 +1756,9 @@ fn update_hud(
     model.0.set_hull_text(format!("{:.0}/100", ship.hull));
     model.0.set_score(format!("{}", run.total()));
     model.0.set_best(format!("{}", career.best_run));
-    let level = crate::upgrades::pilot_level(career.total_score + run.total());
-    model.0.set_level(if career.skill_points > 0 {
-        format!("LVL {level} · {} SP", career.skill_points)
+    let level = crate::upgrades::pilot_level(run.total());
+    model.0.set_level(if run.skill_points > 0 {
+        format!("LVL {level} · {} SP", run.skill_points)
     } else {
         format!("LVL {level}")
     });
@@ -1863,8 +1863,8 @@ fn update_hud(
     // are in hand. No shared currency banner: crafting one row changes
     // that row and the stash chips, nothing else.
     model.0.set_sp_line(format!(
-        "SKILL POINTS: {}   ·   MATERIALS FUEL THE FORGE",
-        career.skill_points
+        "SKILL POINTS: {}   ·   MATERIALS FUEL THE FORGE   ·   RANK RESETS ON RESTART",
+        run.skill_points
     ));
     // Hull repair sits above the upgrade list: maintenance, not
     // engineering — metals only, no skill points.
@@ -1898,7 +1898,7 @@ fn update_hud(
                 .collect::<Vec<_>>()
                 .join(" · ")
                 + &format!(" · {} SP", crate::upgrades::CRAFT_POINT_COST);
-            let affordable = crate::upgrades::can_afford(*slot, next, &stash, &career);
+            let affordable = crate::upgrades::can_afford(*slot, next, &stash, run.skill_points);
             UpgradeRowVm {
                 name: (*label).into(),
                 tier: format!("TIER {}", ship_upgrades.tier(*slot)),
