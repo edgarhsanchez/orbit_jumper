@@ -30,6 +30,12 @@ pub struct AlienShip {
     approach: f64,
     /// Bolts per trigger pull — dreadnoughts volley.
     volley: u32,
+    /// Per-ship rhythm offset: weave timing, so no two raiders jink in
+    /// step.
+    phase: f64,
+    /// Seconds between mines for a layer; 0 = never lays.
+    mine_every: f64,
+    mine_cd: f64,
 }
 
 /// Elite raider: a rarer, heavier variant that appears at higher pilot
@@ -40,9 +46,27 @@ pub struct Elite;
 
 /// The boss. One at a time, every few pilot levels, announced in the
 /// threat line. Same AI loop as a raider — what changes is mass: a dozen
-/// raiders' worth of hull, volley fire, and a bounty to match.
+/// raiders' worth of hull, volley fire, and a bounty to match. Arrives
+/// with a two-raider escort wing.
 #[derive(Component)]
 pub struct Dreadnought;
+
+/// The weaver: a fast, lightly-armed raider that seeds proximity mines
+/// across the fight. Kill it first or the arena shrinks around you.
+#[derive(Component)]
+pub struct MineLayer;
+
+/// A proximity mine: arms after a delay, drifts, detonates on the
+/// player's hull — shields first, like everything else that hits.
+#[derive(Component)]
+pub struct SpaceMine {
+    armed_in: f64,
+    ttl: f64,
+    damage: f64,
+}
+
+/// Mines trigger inside this range, m.
+const MINE_TRIGGER: f64 = 6.0e8;
 
 /// A plasma bolt in flight.
 #[derive(Component)]
@@ -92,7 +116,7 @@ impl Plugin for AliensPlugin {
             .init_resource::<TrajPool>()
             .add_systems(
                 FixedUpdate,
-                (spawn_raiders, alien_ai, fly_bolts).chain(),
+                (spawn_raiders, alien_ai, fly_bolts, fly_mines).chain(),
             )
             .add_systems(Update, project_trajectories);
     }
@@ -143,7 +167,23 @@ fn spawn_raiders(
             ship_vel.0,
             HostileSpec::dreadnought(level),
         );
-        info!("DREADNOUGHT inbound (level {level}); next owed at {}", boss_clock.next_level);
+        // A capital ship travels with a wing: two raiders on its flanks,
+        // so the boss fight opens as a furball, not a duel.
+        for side in [-1.0, 1.0] {
+            let flank = Vec3d::new(-bearing.sin(), bearing.cos(), 0.0) * (3.0e9 * side);
+            spawn_hostile(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                pos + flank,
+                ship_vel.0,
+                HostileSpec::raider(level),
+            );
+        }
+        info!(
+            "DREADNOUGHT inbound with escort wing (level {level}); next owed at {}",
+            boss_clock.next_level
+        );
         return;
     }
 
@@ -152,22 +192,36 @@ fn spawn_raiders(
         return;
     }
 
-    // Elites appear from level 6, more often the deeper you go.
+    // Elites appear from level 6, more often the deeper you go; weavers
+    // join from level 4 and turn the arena into a minefield.
     let elite_chance = if level >= 6 {
         (0.12 + 0.02 * level as f64).min(0.5)
     } else {
         0.0
     };
-    let elite = rng.range(0.0, 1.0) < elite_chance;
-    let spec =
-        if elite { HostileSpec::elite(level) } else { HostileSpec::raider(level) };
+    // Dev hook: OJ_WEAVER=1 forces every regular spawn to a weaver, so
+    // the minefield path can be exercised on demand.
+    let weaver_chance = if std::env::var("OJ_WEAVER").is_ok() {
+        1.0
+    } else if level >= 4 {
+        0.22
+    } else {
+        0.0
+    };
+    let roll = rng.range(0.0, 1.0);
+    let (spec, kind) = if roll < elite_chance {
+        (HostileSpec::elite(level), "elite")
+    } else if roll < elite_chance + weaver_chance {
+        (HostileSpec::weaver(level), "weaver")
+    } else {
+        (HostileSpec::raider(level), "raider")
+    };
     spawn_hostile(&mut commands, &mut meshes, &mut materials, pos, ship_vel.0, spec);
-    info!(
-        "raider inbound (level {level}, pack cap {pack_cap}, elite {elite})"
-    );
+    info!("{kind} inbound (level {level}, pack cap {pack_cap})");
 }
 
-/// Everything that varies between a raider, an elite and a dreadnought.
+/// Everything that varies between a raider, an elite, a weaver and a
+/// dreadnought.
 struct HostileSpec {
     hp: f64,
     bounty: u64,
@@ -178,6 +232,8 @@ struct HostileSpec {
     scale: f32,
     elite: bool,
     boss: bool,
+    /// Seconds between mines; 0 = not a layer.
+    mine_every: f64,
 }
 
 impl HostileSpec {
@@ -194,6 +250,7 @@ impl HostileSpec {
             scale: 1.0,
             elite: false,
             boss: false,
+            mine_every: 0.0,
         }
     }
 
@@ -209,6 +266,23 @@ impl HostileSpec {
             scale: 1.45,
             elite: true,
             boss: false,
+            ..base
+        }
+    }
+
+    /// The weaver: quick, fragile, barely armed — its weapon is the
+    /// minefield it drags behind it.
+    fn weaver(level: u32) -> Self {
+        let base = Self::raider(level);
+        Self {
+            hp: base.hp * 0.7,
+            bounty: base.bounty + level as u64 * 4,
+            damage: base.damage * 0.5,
+            cooldown: base.cooldown * 1.8,
+            approach: base.approach * 1.3,
+            scale: 1.1,
+            mine_every: 5.0,
+            ..base
         }
     }
 
@@ -219,11 +293,10 @@ impl HostileSpec {
             bounty: base.bounty * 15,
             damage: base.damage * 2.2,
             cooldown: base.cooldown * 1.4,
-            bolt_speed: base.bolt_speed,
             approach: base.approach * 0.7,
             scale: 3.4,
-            elite: false,
             boss: true,
+            ..base
         }
     }
 }
@@ -253,6 +326,14 @@ fn spawn_hostile(
             LinearRgba::rgb(1.5, 0.2, 0.25),
             Color::srgb(0.85, 0.5, 0.2),
             LinearRgba::rgb(1.0, 0.5, 0.1),
+        )
+    } else if spec.mine_every > 0.0 {
+        // Weavers run pale ice-blue: read the color, hunt the layer.
+        (
+            Color::srgb(0.65, 0.85, 1.0),
+            LinearRgba::rgb(0.5, 1.0, 1.6),
+            Color::srgb(0.4, 0.6, 0.95),
+            LinearRgba::rgb(0.3, 0.5, 1.4),
         )
     } else {
         (
@@ -294,6 +375,11 @@ fn spawn_hostile(
             bolt_speed: spec.bolt_speed,
             approach: spec.approach,
             volley: if spec.boss { 3 } else { 1 },
+            // Seed the weave rhythm from where the ship arrived, so
+            // every raider jinks on its own clock.
+            phase: (pos.x.to_bits() ^ pos.y.to_bits()) as f64 % 6.28,
+            mine_every: spec.mine_every,
+            mine_cd: spec.mine_every,
         },
         Hull { hp },
         Bounty(bounty),
@@ -311,6 +397,9 @@ fn spawn_hostile(
     }
     if spec.boss {
         root.insert(Dreadnought);
+    }
+    if spec.mine_every > 0.0 {
+        root.insert(MineLayer);
     }
     root.with_children(|alien| {
             // Jagged fin trio at 120-degree spacing.
@@ -368,6 +457,7 @@ fn spawn_hostile(
 
 /// Seek the player; fire when in range; keep a fighting distance.
 fn alien_ai(
+    clock: Res<crate::sim::SimClock>,
     ships: Query<(&SimPos, &SimVel), (With<Ship>, Without<AlienShip>)>,
     #[allow(clippy::type_complexity)]
     mut aliens: Query<
@@ -388,11 +478,16 @@ fn alien_ai(
         // Close to fighting range, then circle: chase point offsets
         // sideways so raiders orbit the fight instead of ramming. The
         // closing speed is a spawn-time stat — veterans close faster.
+        // The circle is not steady: each raider reverses its circling
+        // direction on its own irregular clock and jinks radially, so a
+        // gunner never gets a free tracking solution.
         let desired = if dist > FIRE_RANGE * 0.5 {
             ship_vel.0 + dir * alien.approach
         } else {
+            let weave = (clock.0 * 9.0e-4 + alien.phase).sin().signum();
+            let jink = 1.0 + 0.8 * (clock.0 * 1.7e-3 + alien.phase * 2.0).sin();
             let tangent = Vec3d::new(-dir.y, dir.x, 0.0);
-            ship_vel.0 + tangent * (alien.approach * 0.66) + dir * 5.0e4
+            ship_vel.0 + tangent * (alien.approach * 0.66 * weave) + dir * (5.0e4 * jink)
         };
         let dv = desired - vel.0;
         let a_max = 4.0e4 * TIME_WARP;
@@ -404,6 +499,35 @@ fn alien_ai(
         // Face the prey.
         let angle = (to_ship.y).atan2(to_ship.x) as f32 - std::f32::consts::FRAC_PI_2;
         transform.rotation = Quat::from_rotation_z(angle);
+
+        // Weavers seed the fight with proximity mines while in the
+        // brawl: one every few seconds, dropped in their wake.
+        if alien.mine_every > 0.0 {
+            alien.mine_cd -= DT;
+            if alien.mine_cd <= 0.0 && dist < FIRE_RANGE * 1.4 {
+                alien.mine_cd = alien.mine_every;
+                commands.spawn((
+                    SystemScoped,
+                    SpaceMine { armed_in: 3.0, ttl: 90.0, damage: 22.0 },
+                    SimPos(pos.0),
+                    SimVel(vel.0 * 0.15),
+                    Mesh3d(meshes.add(Sphere::new(2.6).mesh().ico(1).unwrap())),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.5, 0.4, 0.15),
+                        emissive: LinearRgba::rgb(2.6, 1.4, 0.2),
+                        unlit: true,
+                        ..default()
+                    })),
+                    Transform::default(),
+                    crate::fx::FlameFlicker {
+                        phase: alien.phase as f32,
+                        base_scale: Vec3::splat(1.0),
+                    },
+                    bevy::picking::Pickable::IGNORE,
+                ));
+                info!("weaver laid a mine");
+            }
+        }
 
         // Fire. Damage, cadence and bolt speed are the ship's own stats;
         // a dreadnought looses a spread volley instead of one bolt.
@@ -581,5 +705,80 @@ fn fly_bolts(
             );
             commands.entity(entity).despawn();
         }
+    }
+}
+
+/// Mines drift, arm, wait, and go off in the player's face: shields
+/// soak first (costing the reactor), the rest burns the hull, and the
+/// blast shoves the ship. Unarmed or expired mines just die quietly.
+#[allow(clippy::type_complexity)]
+fn fly_mines(
+    mut mines: Query<(Entity, &mut SpaceMine, &mut SimPos, &SimVel), Without<Ship>>,
+    mut ships: Query<
+        (&mut Ship, &SimPos, &mut SimVel),
+        (With<crate::sim::OriginAnchor>, Without<SpaceMine>),
+    >,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
+) {
+    let dt = DT * TIME_WARP;
+    for (entity, mut mine, mut pos, vel) in &mut mines {
+        mine.armed_in -= DT;
+        mine.ttl -= DT;
+        if mine.ttl <= 0.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        pos.0 += vel.0 * dt;
+        if mine.armed_in > 0.0 {
+            continue;
+        }
+        let Ok((mut ship, ship_pos, mut ship_vel)) = ships.single_mut() else { continue };
+        let d = ship_pos.0.distance(pos.0);
+        if d > MINE_TRIGGER {
+            continue;
+        }
+        let strike_dir = if d > 1.0 {
+            (pos.0 - ship_pos.0) / d
+        } else {
+            Vec3d::new(1.0, 0.0, 0.0)
+        };
+        let absorbed = mine.damage.min(ship.shield);
+        let through = mine.damage - absorbed;
+        sfx.write(crate::audio::Sfx::Explosion);
+        if absorbed > 0.0 {
+            ship.shield -= absorbed;
+            ship.energy = (ship.energy - absorbed * 0.6).max(0.0);
+            sfx.write(crate::audio::Sfx::ShieldHit);
+            crate::fx::spawn_shield_flare(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                ship_pos.0,
+                ship_vel.0,
+                strike_dir,
+                16.0,
+            );
+        }
+        if through > 0.0 {
+            ship.hull = (ship.hull - through).max(0.0);
+            sfx.write(crate::audio::Sfx::HullHit);
+        }
+        crate::fx::spawn_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            pos.0,
+            Vec3d::ZERO,
+            10.0,
+        );
+        ship_vel.0 += strike_dir * -1.0e4;
+        info!(
+            "mine detonation: shield {:.0}, hull {:.0}, energy {:.0}",
+            ship.shield, ship.hull, ship.energy
+        );
+        commands.entity(entity).despawn();
     }
 }

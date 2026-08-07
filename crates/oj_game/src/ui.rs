@@ -101,6 +101,9 @@ struct HudVm {
     map_status: String,
     level: String,
     sp_line: String,
+    repair_line: String,
+    repair_color: String,
+    death_stats: String,
     style: String,
     threat: String,
     heading: String,
@@ -120,7 +123,10 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiLayoutState>()
             .add_systems(Startup, init_model)
-            .add_systems(Update, (update_hud, toggle_panel, log_commands, exit_orbit_visibility))
+            .add_systems(
+                Update,
+                (update_hud, toggle_panel, log_commands, exit_orbit_visibility, death_screen_visibility),
+            )
             .add_systems(Update, relayout_ui)
             // The touch-key bridge must run AFTER bevy's per-frame input
             // clear and AFTER UI focus computes Interaction, or the
@@ -361,6 +367,14 @@ const PANEL_XAML: &str = r##"
     </Rectangle>
 
     <TextBlock Text="{Binding sp_line}" Foreground="#00E5FF" FontSize="11" Margin="0,0,0,4"/>
+
+    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+      <TextBlock Text="{Binding repair_line}" Foreground="{Binding repair_color}"
+                 FontSize="11" Width="231" Margin="0,4,0,0"/>
+      <Button Content="REPAIR" Command="repair"
+              Background="#0B1B22" BorderBrush="#FF8A50" Foreground="#FF8A50"
+              FontSize="10" Padding="7,2"/>
+    </StackPanel>
 
     <ItemsControl ItemsSource="{Binding rows}">
       <ItemsControl.ItemTemplate>
@@ -1267,6 +1281,55 @@ struct MapPanel(Entity);
 #[derive(Resource)]
 struct ExitOrbitPanel(Entity);
 
+/// Root entity of the destroyed-vessel screen; shown while a restart is
+/// awaited.
+#[derive(Resource)]
+struct DeathPanel(Entity);
+
+/// The destroyed-vessel screen: what the run was worth, what survives,
+/// and the invitation to fly again. Enter works too.
+const DEATH_XAML: &str = r##"
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        HorizontalAlignment="Center" VerticalAlignment="Center"
+        Background="#F60D131C" BorderBrush="#FF5459" BorderThickness="1"
+        Padding="26,20" Width="430">
+  <StackPanel>
+    <TextBlock Text="VESSEL DESTROYED" Foreground="#FF5459" FontSize="20"/>
+    <Rectangle Width="378" Height="1" Fill="#FF5459" Margin="0,8,0,10" HorizontalAlignment="Left"/>
+    <TextBlock Text="{Binding death_stats}" Foreground="#E0E2EB" FontSize="12"/>
+    <TextBlock Text="THE HULL IS LOST. THE PILOT IS NOT: GEAR, STASH AND CAREER SURVIVE."
+               Foreground="#5A6472" FontSize="10" Margin="0,8,0,0"/>
+    <Button Content="START OVER" Command="restart" Margin="0,14,0,0"
+            Background="#1A0E12" BorderBrush="#FF5459" Foreground="#FF5459"
+            FontSize="13" Padding="16,7" HorizontalAlignment="Left"/>
+  </StackPanel>
+</Border>
+"##;
+
+/// Show the destroyed-vessel screen while a restart is awaited; keep its
+/// frozen run summary bound.
+fn death_screen_visibility(
+    panel: Option<Res<DeathPanel>>,
+    last_run: Res<crate::modules::LastRun>,
+    model: Option<Res<HudModel>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut awaiting: ResMut<crate::modules::AwaitingRestart>,
+    mut vis: Query<&mut Visibility>,
+) {
+    if let Some(model) = model {
+        model.0.set_death_stats(last_run.0.clone());
+    }
+    // Enter restarts without reaching for the mouse.
+    if awaiting.0 && keys.just_pressed(KeyCode::Enter) {
+        awaiting.0 = false;
+    }
+    let Some(panel) = panel else { return };
+    if let Ok(mut v) = vis.get_mut(panel.0) {
+        *v = if awaiting.0 { Visibility::Visible } else { Visibility::Hidden };
+    }
+}
+
 fn exit_orbit_visibility(
     panel: Option<Res<ExitOrbitPanel>>,
     ships: Query<&NavState, With<crate::sim::Ship>>,
@@ -1318,6 +1381,14 @@ fn init_model(mut commands: Commands) {
         if let Some(target) = target {
             world.resource_mut::<crate::travel::PendingJump>().0 = Some(target);
         }
+    });
+    // The panel's REPAIR button patches the hull from the stash.
+    vm.on_command("repair", |world, _| {
+        crate::upgrades::repair_from_world(world);
+    });
+    // The destroyed-vessel screen's START OVER: release the respawn.
+    vm.on_command("restart", |world, _| {
+        world.resource_mut::<crate::modules::AwaitingRestart>().0 = false;
     });
     // Ship-yard styling: cycle an index, persist, rebuild the visuals.
     for (name, which) in [("style_frame", 0usize), ("style_paint", 1), ("style_accent", 2)] {
@@ -1477,6 +1548,7 @@ fn relayout_ui(world: &mut World) {
         Map,
         Controls,
         ExitOrbit,
+        Death,
     }
     // The audit that decides what lives where: tactical carries the
     // management surface (sensors, meta, yard, map); the cockpit carries
@@ -1508,6 +1580,7 @@ fn relayout_ui(world: &mut World) {
         ]
     };
     docs.push((m.fill(EXIT_ORBIT_XAML), Doc::ExitOrbit));
+    docs.push((DEATH_XAML.to_string(), Doc::Death));
     if m.touch_controls {
         let topbar = if cockpit { TOUCH_TOPBAR_COCKPIT_XAML } else { TOUCH_TOPBAR_XAML };
         docs.push((m.fill(topbar), Doc::Controls));
@@ -1567,6 +1640,12 @@ fn relayout_ui(world: &mut World) {
                 world.entity_mut(root).insert(Visibility::Hidden);
                 world.insert_resource(ExitOrbitPanel(root));
             }
+            Doc::Death => {
+                world
+                    .entity_mut(root)
+                    .insert((Visibility::Hidden, GlobalZIndex(40)));
+                world.insert_resource(DeathPanel(root));
+            }
             Doc::Controls => {
                 // Wire each named button to its virtual key.
                 let buttons: Vec<(Entity, KeyCode)> = world
@@ -1612,6 +1691,7 @@ fn update_hud(
                 &crate::SimVel,
                 Option<&crate::aliens::Dreadnought>,
                 Option<&crate::aliens::Elite>,
+                Option<&crate::aliens::MineLayer>,
             ),
             With<crate::aliens::AlienShip>,
         >,
@@ -1672,7 +1752,7 @@ fn update_hud(
 
     model.0.set_style(style_res.label());
     let raiders = raider_q.iter().count();
-    let boss_present = raider_q.iter().any(|(_, _, _, boss, _)| boss.is_some());
+    let boss_present = raider_q.iter().any(|(_, _, _, boss, _, _)| boss.is_some());
     model.0.set_threat(if boss_present {
         "!! DREADNOUGHT IN-SYSTEM".into()
     } else if raiders > 0 {
@@ -1686,7 +1766,7 @@ fn update_hud(
     // locked vessel is flagged and drives the console target line.
     let mut target_line = String::new();
     let mut contacts: Vec<(f64, ContactVm)> = Vec::new();
-    for (i, (entity, a_pos, a_vel, boss, elite)) in raider_q.iter().enumerate() {
+    for (i, (entity, a_pos, a_vel, boss, elite, weaver)) in raider_q.iter().enumerate() {
         let rel = a_pos.0 - ship_pos.0;
         let dist = rel.length();
         let rel_v = a_vel.0 - vel.0;
@@ -1695,6 +1775,8 @@ fn update_hud(
         let locked = lock.0 == Some(entity);
         let callsign = if boss.is_some() {
             "DREADNOUGHT".to_string()
+        } else if weaver.is_some() {
+            format!("WEAVER-{} [MINES]", i + 1)
         } else if elite.is_some() {
             format!("ELITE RAIDER-{}", i + 1)
         } else {
@@ -1770,6 +1852,27 @@ fn update_hud(
         "SKILL POINTS: {}   ·   MATERIALS FUEL THE FORGE",
         career.skill_points
     ));
+    // Hull repair sits above the upgrade list: maintenance, not
+    // engineering — metals only, no skill points.
+    let missing = 100.0 - ship.hull;
+    if missing < 0.5 {
+        model.0.set_repair_line("HULL 100/100 — NOMINAL".into());
+        model.0.set_repair_color("#5A6472".into());
+    } else {
+        let cost = crate::upgrades::repair_cost(missing);
+        model.0.set_repair_line(format!(
+            "HULL {:.0}/100 — PATCH: {}",
+            ship.hull,
+            cost.iter()
+                .map(|(e, n)| format!("{n} {}", element_display(*e).0))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        ));
+        let affordable = cost
+            .iter()
+            .all(|(e, n)| stash.0.get(e).copied().unwrap_or(0) >= *n);
+        model.0.set_repair_color(if affordable { "#7CFFB0" } else { "#FF8A50" }.into());
+    }
     let rows: Vec<UpgradeRowVm> = CRAFT_SLOTS
         .iter()
         .enumerate()

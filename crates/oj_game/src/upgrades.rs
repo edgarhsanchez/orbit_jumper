@@ -68,6 +68,49 @@ pub fn can_afford(slot: UpgradeSlot, next_tier: u8, stash: &Stash, career: &Care
             .all(|(e, n)| stash.0.get(e).copied().unwrap_or(0) >= *n)
 }
 
+/// Materials to patch `missing` points of hull: structural metals only —
+/// repair is maintenance, not engineering, so it costs no skill points.
+pub fn repair_cost(missing: f64) -> [(Element, u32); 2] {
+    let m = (missing.ceil() as u32).max(1);
+    [(Element::Iron, m.div_ceil(10)), (Element::Titanium, m.div_ceil(20))]
+}
+
+/// Patch the hull back to full out of the stash. No-op when the hull is
+/// whole or the metals are short — all or nothing, like crafting.
+pub fn try_repair(stash: &mut Stash, ship: &mut Ship) -> bool {
+    let missing = 100.0 - ship.hull;
+    if missing < 0.5 {
+        return false;
+    }
+    let cost = repair_cost(missing);
+    if !cost.iter().all(|(e, n)| stash.0.get(e).copied().unwrap_or(0) >= *n) {
+        return false;
+    }
+    for (element, n) in cost {
+        if let Some(have) = stash.0.get_mut(&element) {
+            *have -= n;
+        }
+    }
+    ship.hull = 100.0;
+    info!("hull repaired");
+    true
+}
+
+/// Repair from an exclusive-world context — the vessel panel's REPAIR
+/// button.
+pub fn repair_from_world(world: &mut World) {
+    world.resource_scope(|world, mut stash: Mut<Stash>| {
+        world.resource_scope(|world, upgrades: Mut<ShipUpgrades>| {
+            let mut ships = world.query::<&mut Ship>();
+            if let Ok(mut ship) = ships.single_mut(world)
+                && try_repair(&mut stash, &mut ship)
+            {
+                save_loadout(&upgrades, &stash);
+            }
+        });
+    });
+}
+
 /// The pilot's engineering, persisted between sessions: installed gear
 /// tiers and the material stash. Skill points are persisted currency
 /// (CareerScore); spending them on goods that evaporated at exit would
@@ -192,6 +235,14 @@ fn buy_upgrades(
             }
             sfx.write(crate::audio::Sfx::Salvage);
         }
+    }
+    // 9: patch the hull (the panel's REPAIR button, as a key).
+    if keys.just_pressed(KeyCode::Digit9)
+        && let Ok(mut ship) = ships.single_mut()
+        && try_repair(&mut stash, &mut ship)
+    {
+        save_loadout(&upgrades, &stash);
+        sfx.write(crate::audio::Sfx::Salvage);
     }
 }
 

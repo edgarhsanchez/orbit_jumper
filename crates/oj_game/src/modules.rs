@@ -189,16 +189,29 @@ pub struct ShipDestroyed {
     pub at: Vec3d,
 }
 
+/// Set while the destroyed-vessel screen is up: the pilot flies again
+/// only when they choose to. Respawn waits on this.
+#[derive(Resource, Default)]
+pub struct AwaitingRestart(pub bool);
+
+/// The ended run's numbers, frozen at the moment of death for the
+/// destroyed-vessel screen (the live RunScore resets immediately).
+#[derive(Resource, Default)]
+pub struct LastRun(pub String);
+
 pub struct SalvagePlugin;
 
 impl Plugin for SalvagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Stash>()
+            .init_resource::<AwaitingRestart>()
+            .init_resource::<LastRun>()
             .add_message::<ShipDestroyed>()
             .add_systems(
                 FixedUpdate,
                 (detect_death, spawn_wrecks, magnet_wrecks, collect_wrecks, respawn).chain(),
-            );
+            )
+            .add_systems(Update, dev_hull);
     }
 }
 
@@ -215,10 +228,13 @@ fn detect_death(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_wrecks(
     mut events: MessageReader<ShipDestroyed>,
     mut career: ResMut<CareerScore>,
     mut run: ResMut<RunScore>,
+    mut awaiting: ResMut<AwaitingRestart>,
+    mut last_run: ResMut<LastRun>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -226,7 +242,17 @@ fn spawn_wrecks(
 ) {
     for death in events.read() {
         sfx.write(crate::audio::Sfx::Explosion);
+        sfx.write(crate::audio::Sfx::Warning);
         career.ships_lost += 1;
+        // Freeze the ended run for the destroyed-vessel screen, then
+        // hold the respawn until the pilot chooses to fly again.
+        last_run.0 = format!(
+            "RUN SCORE {}  ·  KILLS {}  ·  SALVAGE {} CR",
+            run.total(),
+            run.kills,
+            run.salvage_value
+        );
+        awaiting.0 = true;
         career.absorb(&run);
         *run = RunScore::default();
         // Going down IS an event — the biggest fireball in the game.
@@ -302,6 +328,26 @@ fn magnet_wrecks(
     }
 }
 
+/// Dev hook: OJ_HULL=40 sets the first ship's hull (and drops the
+/// shield) so the repair and destroyed-vessel paths can be exercised
+/// without volunteering for a beating. Once, first ship only.
+fn dev_hull(mut done: Local<bool>, mut ships: Query<&mut Ship>) {
+    if *done {
+        return;
+    }
+    let Ok(v) = std::env::var("OJ_HULL") else {
+        *done = true;
+        return;
+    };
+    if let Ok(v) = v.parse::<f64>()
+        && let Ok(mut ship) = ships.single_mut()
+    {
+        ship.hull = v;
+        ship.shield = 0.0;
+        *done = true;
+    }
+}
+
 const COLLECT_RADIUS: f64 = 5.0e8;
 
 fn collect_wrecks(
@@ -336,6 +382,7 @@ fn collect_wrecks(
 #[allow(clippy::too_many_arguments)]
 fn respawn(
     ships: Query<(), With<Ship>>,
+    awaiting: Res<AwaitingRestart>,
     game: Res<GameUniverse>,
     style: Res<crate::sim::ShipStyle>,
     mut study: ResMut<StudyState>,
@@ -344,7 +391,9 @@ fn respawn(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if !ships.is_empty() {
+    // The destroyed-vessel screen holds the field until the pilot
+    // presses START OVER.
+    if !ships.is_empty() || awaiting.0 {
         return;
     }
     let Some(system) = game.universe.system(game.current) else { return };
