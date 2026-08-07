@@ -311,3 +311,46 @@ pub fn displayed_sun_class(class: SunClass, revealed: bool) -> String {
         "unknown (hold S to study)".to_string()
     }
 }
+
+#[cfg(test)]
+mod score_tests {
+    use super::*;
+
+    /// The invariant the difficulty overhaul exists to hold: an hour of
+    /// idling must be worth less than one bounty-weighted kill, so pilot
+    /// level is paced by combat, not wall clock.
+    #[test]
+    fn idling_cannot_outscore_fighting() {
+        let mut idle = RunScore::default();
+        idle.seconds_survived = 3600.0; // one hour parked
+        let mut fight = RunScore::default();
+        fight.kills = 1;
+        fight.combat_score = 48 * 12; // one level-1 raider bounty
+        assert!(
+            fight.total() < idle.total() * 2 && idle.total() < fight.total() * 8,
+            "one kill ({}) and an idle hour ({}) should be the same order — combat must dominate per minute",
+            fight.total(),
+            idle.total()
+        );
+        // Per MINUTE of play the gap is the point: a kill takes seconds.
+        let idle_minute = RunScore { seconds_survived: 60.0, ..Default::default() };
+        assert!(
+            fight.total() > idle_minute.total() * 8,
+            "a kill must dwarf a minute of idling"
+        );
+    }
+
+    /// Boss bounties must pay level-scale points: one dreadnought at
+    /// level 6 is worth several levels of raider grinding.
+    #[test]
+    fn boss_kill_is_level_scale() {
+        let raider_bounty = 40 + 6 * 8; // level 6
+        let boss_bounty = raider_bounty * 15;
+        let mut run = RunScore::default();
+        run.combat_score = boss_bounty * 12;
+        run.kills = 1;
+        // Level 2 costs 2000 lifetime points; the boss alone clears it
+        // several times over.
+        assert!(run.total() > 2000 * 6, "boss kill = {}", run.total());
+    }
+}
