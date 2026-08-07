@@ -454,8 +454,8 @@ fn update_hud(
     } else {
         match *nav {
             NavState::Free => ">> FREE FLIGHT — CLICK+HOLD A BODY".into(),
-            NavState::Transfer { target } => format!(">> TRANSFER: {}", name(target)),
-            NavState::Orbiting { body } => format!(">> ORBIT LOCK: {}", name(body)),
+            NavState::Transfer { target, .. } => format!(">> TRANSFER: {}", name(target)),
+            NavState::Orbiting { body, .. } => format!(">> ORBIT LOCK: {}", name(body)),
         }
     };
     model.0.set_nav(if flash.ttl > 0.0 {

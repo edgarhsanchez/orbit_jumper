@@ -13,29 +13,32 @@ use bevy::prelude::*;
 use oj_orbits::Vec3d;
 
 use crate::modules::RunScore;
-use crate::sim::{BodyVel, CelestialBody, DT, Ship, TIME_WARP};
+use crate::sim::{BodyVel, CelestialBody, DT, OrbitRing, Ship, TIME_WARP, orbit_rings};
 use crate::{SimPos, SimVel};
 
 /// Seconds of hold to issue an orbit command.
 const HOLD_SECONDS: f64 = 1.2;
 
 /// Ship navigation mode.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
 pub enum NavState {
     /// Manual flight; gravity and arrow thrust only.
     #[default]
     Free,
-    /// Guided burn toward a circular orbit of `target`.
-    Transfer { target: Entity },
+    /// Guided burn toward a circular orbit of `target` at `ride_r`.
+    Transfer { target: Entity, ride_r: f64 },
     /// Captured; light station-keeping holds the orbit while the body
     /// carries the ship around the system — the hitched ride.
-    Orbiting { body: Entity },
+    Orbiting { body: Entity, ride_r: f64 },
 }
 
 /// The in-progress click-and-hold, if any.
 #[derive(Resource, Default)]
 pub struct CommandHold {
     pub target: Option<Entity>,
+    /// The ride orbit being commanded, sim meters (the clicked ring's
+    /// radius, or the innermost ring for a click on the body itself).
+    pub ride_r: f64,
     pub progress: f64,
     pub out_of_range: bool,
 }
@@ -64,11 +67,23 @@ impl Plugin for CommandPlugin {
 
 fn on_press(
     ev: On<Pointer<Press>>,
-    celestials: Query<(), With<CelestialBody>>,
+    rings: Query<&OrbitRing>,
+    celestials: Query<&CelestialBody>,
     mut hold: ResMut<CommandHold>,
 ) {
-    if celestials.get(ev.entity).is_ok() {
-        hold.target = Some(ev.entity);
+    // A press on a ring commands THAT orbit; a press on the body itself
+    // commands its innermost ring.
+    let picked = if let Ok(ring) = rings.get(ev.entity) {
+        Some((ring.body, ring.ride_r))
+    } else {
+        celestials
+            .get(ev.entity)
+            .ok()
+            .map(|b| (ev.entity, orbit_rings(b.radius, b.soi)[0]))
+    };
+    if let Some((target, ride_r)) = picked {
+        hold.target = Some(target);
+        hold.ride_r = ride_r;
         hold.progress = 0.0;
         hold.out_of_range = false;
     }
@@ -91,7 +106,12 @@ fn tick_hold(
         hold.target = None;
         return;
     };
-    if ship_pos.0.distance(body_pos.0) > ship.command_range {
+    // Range is measured to the ORBIT, not the body's center: a giant's
+    // outer ring can pass close enough to leap onto while the body
+    // itself sits far outside command range.
+    let d = ship_pos.0.distance(body_pos.0);
+    let to_ring = (d - hold.ride_r).abs().min(d);
+    if to_ring > ship.command_range {
         hold.out_of_range = true;
         hold.progress = 0.0;
         return;
@@ -99,7 +119,7 @@ fn tick_hold(
     hold.out_of_range = false;
     hold.progress += DT / HOLD_SECONDS;
     if hold.progress >= 1.0 {
-        *nav = NavState::Transfer { target };
+        *nav = NavState::Transfer { target, ride_r: hold.ride_r };
         hold.target = None;
         hold.progress = 0.0;
     }
@@ -121,10 +141,10 @@ fn guide_nav(
         *nav = NavState::Free;
         return;
     }
-    let (target, station_keeping) = match *nav {
+    let (target, ride_r, station_keeping) = match *nav {
         NavState::Free => return,
-        NavState::Transfer { target } => (target, false),
-        NavState::Orbiting { body } => (body, true),
+        NavState::Transfer { target, ride_r } => (target, ride_r, false),
+        NavState::Orbiting { body, ride_r } => (body, ride_r, true),
     };
     let Ok((body, body_pos, body_vel)) = bodies.get(target) else {
         *nav = NavState::Free;
@@ -135,9 +155,9 @@ fn guide_nav(
     let rel_vel = vel.0 - body_vel.0;
     let r = rel_pos.length().max(body.radius);
 
-    // Target ring: close enough to feel "in orbit", never inside the body,
-    // never outside the body's influence.
-    let r_target = (body.radius * 4.0).min(body.soi * 0.3).max(body.radius * 1.5);
+    // The commanded ring, clamped never inside the body and never
+    // outside its influence.
+    let r_target = ride_r.max(body.radius * 1.2).min(body.soi * 0.9);
     let v_circ = (body.mu / r).sqrt();
     let r_hat = rel_pos.normalized();
     // In-plane tangent; degenerate (radial) approaches pick any normal.
@@ -152,8 +172,13 @@ fn guide_nav(
     // needs continuous inward correction, so the energy price below is
     // the real centripetal deficit, not a fee schedule.
     let v_ride = v_circ * if station_keeping { ship.orbit_boost } else { 1.0 };
-    let radial_gain = 0.5 * v_circ / r_target;
-    let v_des = t_hat * v_ride + r_hat * (radial_gain * (r_target - r)).clamp(-v_circ, v_circ);
+    // Approach rate: close the radial gap in ~this much SIM time whatever
+    // the scale — a leap between rings must feel like seconds, not
+    // orbital-mechanics hours (measured: a v_circ-capped descent took
+    // minutes of real time). The gap shrinking slows the approach
+    // naturally, so arrival is smooth; burns still price energy.
+    const TRANSFER_CLOSE_SIM_S: f64 = 6000.0;
+    let v_des = t_hat * v_ride + r_hat * ((r_target - r) / TRANSFER_CLOSE_SIM_S);
 
     let dv = v_des - rel_vel;
     let a_max = ship.thrust * TIME_WARP * if station_keeping { 0.5 } else { 4.0 };
@@ -174,7 +199,7 @@ fn guide_nav(
         let radius_ok = (r - r_target).abs() / r_target < 0.15;
         let speed_ok = (rel_vel.length() - v_circ).abs() / v_circ < 0.15;
         if radius_ok && speed_ok {
-            *nav = NavState::Orbiting { body: target };
+            *nav = NavState::Orbiting { body: target, ride_r };
         }
     }
 }

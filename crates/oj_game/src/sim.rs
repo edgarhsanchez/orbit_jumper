@@ -33,6 +33,8 @@ impl Plugin for SimPlugin {
                     .chain(),
             )
             .add_systems(Update, sync_render_transforms);
+        #[cfg(debug_assertions)]
+        app.add_systems(Update, debug_teleport);
     }
 }
 
@@ -122,6 +124,40 @@ pub struct OriginAnchor;
 #[derive(Component)]
 pub struct SystemScoped;
 
+/// A clickable ride orbit around a celestial body. Click+hold the ring
+/// to transfer into orbit at exactly `ride_r`.
+#[derive(Component)]
+pub struct OrbitRing {
+    pub body: Entity,
+    /// Orbit radius, sim meters.
+    pub ride_r: f64,
+}
+
+/// Shared ring materials: dim at rest, bright under the pointer.
+#[derive(Resource)]
+pub struct OrbitRingMaterials {
+    pub dim: Handle<StandardMaterial>,
+    pub bright: Handle<StandardMaterial>,
+}
+
+/// Candidate ride orbits for a body, innermost first: fixed multiples of
+/// the physical radius, capped inside the sphere of influence. Bigger
+/// bodies therefore carry bigger (and more) rings — a giant's outer ring
+/// is grabbable from far away even when the body itself is a distant dot.
+pub fn orbit_rings(radius: f64, soi: f64) -> Vec<f64> {
+    const MULTS: [f64; 4] = [3.0, 8.0, 20.0, 50.0];
+    let cap = soi * 0.6;
+    let mut rings: Vec<f64> = MULTS
+        .iter()
+        .map(|m| radius * m)
+        .filter(|r| *r <= cap)
+        .collect();
+    if rings.is_empty() {
+        rings.push((radius * 1.5).min(cap).max(radius * 1.2));
+    }
+    rings
+}
+
 fn spawn_current_system(
     mut commands: Commands,
     game: Res<GameUniverse>,
@@ -196,8 +232,27 @@ pub fn spawn_bodies(
 ) {
     let mu = oj_orbits::G * system.sun.mass;
 
+    // Ride-orbit ring materials: dim at rest, bright under the pointer.
+    let ring_dim = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.0, 0.9, 1.0, 0.12),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let ring_bright = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.3, 1.0, 1.0, 0.55),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    commands.insert_resource(OrbitRingMaterials {
+        dim: ring_dim.clone(),
+        bright: ring_bright,
+    });
+
     // Sun at the origin of the system-local frame.
-    commands.spawn((
+    let sun_radius = system.sun.radius.max(2.0e9);
+    let sun_entity = commands.spawn((
         SystemScoped,
         SunBody {
             class: system.sun.class,
@@ -205,7 +260,7 @@ pub fn spawn_bodies(
         },
         CelestialBody {
             mu,
-            radius: system.sun.radius.max(2.0e9),
+            radius: sun_radius,
             soi: f64::INFINITY,
             name: format!("{:?}-class sun", system.sun.class),
         },
@@ -226,16 +281,17 @@ pub fn spawn_bodies(
             ..default()
         },
         Transform::default(),
-    ));
+    )).id();
+    spawn_rings_for(commands, sun_entity, sun_radius, f64::INFINITY, meshes, &ring_dim);
 
-    // Planets on rails. One shared mesh: automatic instancing batches them.
-    let planet_mesh = meshes.add(Sphere::new(40.0).mesh().ico(3).unwrap());
+    // Planets on rails. Meshes are per-body at PHYSICAL radius (render
+    // units): ride rings are geometry the pilot reasons about, so the
+    // sprite must not lie about where the surface is.
     let planet_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.45, 0.5, 0.6),
         perceptual_roughness: 0.9,
         ..default()
     });
-    let moon_mesh = meshes.add(Sphere::new(12.0).mesh().ico(2).unwrap());
     let moon_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.6, 0.58, 0.55),
         perceptual_roughness: 1.0,
@@ -254,48 +310,58 @@ pub fn spawn_bodies(
             ^ (system.id.sector.z as u64).rotate_left(51),
     );
     for (i, planet) in system.planets.iter().enumerate() {
+        let planet_radius = planet.radius.max(1.0e8);
+        let planet_soi = oj_orbits::sphere_of_influence(
+            planet.orbit.semi_major,
+            planet.mass,
+            system.sun.mass,
+        );
         let planet_entity = commands
             .spawn((
                 SystemScoped,
                 OnRails(planet.orbit),
                 CelestialBody {
                     mu: oj_orbits::G * planet.mass,
-                    radius: planet.radius.max(1.0e8),
-                    soi: oj_orbits::sphere_of_influence(
-                        planet.orbit.semi_major,
-                        planet.mass,
-                        system.sun.mass,
-                    ),
+                    radius: planet_radius,
+                    soi: planet_soi,
                     name: format!("Planet {}", i + 1),
                 },
                 SimPos::default(),
                 BodyVel::default(),
-                Mesh3d(planet_mesh.clone()),
+                Mesh3d(meshes.add(
+                    Sphere::new((planet_radius * RENDER_SCALE) as f32).mesh().ico(3).unwrap(),
+                )),
                 MeshMaterial3d(planet_mat.clone()),
                 Transform::default(),
             ))
             .id();
+        spawn_rings_for(commands, planet_entity, planet_radius, planet_soi, meshes, &ring_dim);
         // Moons: commandable bodies riding parented rails.
         for (m, moon) in planet.moons.iter().enumerate() {
-            commands.spawn((
+            let moon_radius = moon.radius.max(3.0e7);
+            let moon_soi = oj_orbits::sphere_of_influence(
+                moon.orbit.semi_major,
+                moon.mass,
+                planet.mass,
+            );
+            let moon_entity = commands.spawn((
                 SystemScoped,
                 OnRailsAround { orbit: moon.orbit, parent: planet_entity },
                 CelestialBody {
                     mu: oj_orbits::G * moon.mass,
-                    radius: moon.radius.max(3.0e7),
-                    soi: oj_orbits::sphere_of_influence(
-                        moon.orbit.semi_major,
-                        moon.mass,
-                        planet.mass,
-                    ),
+                    radius: moon_radius,
+                    soi: moon_soi,
                     name: format!("Planet {} moon {}", i + 1, (b'a' + m as u8) as char),
                 },
                 SimPos::default(),
                 BodyVel::default(),
-                Mesh3d(moon_mesh.clone()),
+                Mesh3d(meshes.add(
+                    Sphere::new((moon_radius * RENDER_SCALE) as f32).mesh().ico(2).unwrap(),
+                )),
                 MeshMaterial3d(moon_mat.clone()),
                 Transform::default(),
-            ));
+            )).id();
+            spawn_rings_for(commands, moon_entity, moon_radius, moon_soi, meshes, &ring_dim);
         }
         // Ring debris: salvage on parented rails, density from the seed.
         let count = (planet.debris_density * 30.0) as u32;
@@ -330,6 +396,86 @@ pub fn spawn_bodies(
             ));
         }
     }
+}
+
+/// Spawn a body's ride-orbit rings as render-space children: the parent's
+/// per-frame Transform positions them, so they follow the body for free
+/// and despawn with it (recursive despawn on jumps).
+fn spawn_rings_for(
+    commands: &mut Commands,
+    body: Entity,
+    radius: f64,
+    soi: f64,
+    meshes: &mut Assets<Mesh>,
+    dim: &Handle<StandardMaterial>,
+) {
+    for ride_r in orbit_rings(radius, soi) {
+        let r_render = (ride_r * RENDER_SCALE) as f32;
+        // Thick enough to hover and click at every scale.
+        let thickness = (r_render * 0.02).clamp(2.0, 16.0);
+        let ring = commands
+            .spawn((
+                OrbitRing { body, ride_r },
+                Mesh3d(meshes.add(
+                    Torus {
+                        minor_radius: thickness,
+                        major_radius: r_render,
+                    }
+                    .mesh()
+                    .major_resolution(96)
+                    .minor_resolution(6),
+                )),
+                MeshMaterial3d(dim.clone()),
+                // The torus lies in XZ; orbits live in XY.
+                Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            ))
+            .observe(ring_hover_on)
+            .observe(ring_hover_off)
+            .id();
+        commands.entity(body).add_child(ring);
+    }
+}
+
+fn ring_hover_on(
+    over: On<bevy::picking::events::Pointer<bevy::picking::events::Over>>,
+    mats: Res<OrbitRingMaterials>,
+    mut rings: Query<&mut MeshMaterial3d<StandardMaterial>, With<OrbitRing>>,
+) {
+    if let Ok(mut m) = rings.get_mut(over.entity) {
+        m.0 = mats.bright.clone();
+    }
+}
+
+fn ring_hover_off(
+    out: On<bevy::picking::events::Pointer<bevy::picking::events::Out>>,
+    mats: Res<OrbitRingMaterials>,
+    mut rings: Query<&mut MeshMaterial3d<StandardMaterial>, With<OrbitRing>>,
+) {
+    if let Ok(mut m) = rings.get_mut(out.entity) {
+        m.0 = mats.dim.clone();
+    }
+}
+
+/// Dev-only: G teleports the ship next to the first planet, inside its
+/// ring set — the fast path to exercising ring hover/click by hand.
+#[cfg(debug_assertions)]
+#[allow(clippy::type_complexity)]
+fn debug_teleport(
+    keys: Res<ButtonInput<KeyCode>>,
+    planets: Query<(&CelestialBody, &SimPos, &BodyVel), (With<OnRails>, Without<Ship>)>,
+    mut ships: Query<(&mut SimPos, &mut SimVel), (With<Ship>, Without<OnRails>)>,
+) {
+    if !keys.just_pressed(KeyCode::KeyG) {
+        return;
+    }
+    let (Some((body, pos, vel)), Ok((mut spos, mut svel))) =
+        (planets.iter().next(), ships.single_mut())
+    else {
+        return;
+    };
+    spos.0 = pos.0 + Vec3d::new(body.radius * 12.0, 0.0, 0.0);
+    svel.0 = vel.0;
+    info!("debug teleport beside {}", body.name);
 }
 
 fn place_celestials(clock: Res<SimClock>, mut bodies: Query<(&OnRails, &mut SimPos, &mut BodyVel)>) {
