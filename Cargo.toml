@@ -36,3 +36,14 @@ opt-level = 3
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+
+# Web bundle: size over compile time — downloads dominate perceived perf
+# on the web. Used by web/build-wasm.sh.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+# thin, not fat: fat LTO on a bevy-sized wasm link exceeds CI runner
+# memory (learned in bevy_pf's pages pipeline).
+lto = "thin"
+codegen-units = 1
+strip = true

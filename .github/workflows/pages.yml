@@ -1,0 +1,84 @@
+name: Deploy playable build to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "web/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Lesson from bevy_pf's pipeline: rust-cache's target pruning cannot
+      # see a custom profile under a cross target in a renamed target dir
+      # and silently drops the artifacts. Cache ~/.cargo via rust-cache,
+      # target-wasm whole via actions/cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+
+      - name: Cache target-wasm (whole, unpruned)
+        uses: actions/cache@v4
+        with:
+          path: target-wasm
+          key: target-wasm-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            target-wasm-${{ steps.toolchain.outputs.cachekey }}-
+
+      - name: Install wasm-bindgen-cli (must match Cargo.lock pin)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.126
+
+      - name: Install wasm-opt (pinned binaryen — apt's is years old)
+        run: |
+          curl -sL https://github.com/WebAssembly/binaryen/releases/download/version_130/binaryen-version_130-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_130/bin" >> "$GITHUB_PATH"
+
+      - name: Build wasm bundle
+        run: ./web/build-wasm.sh
+
+      - name: Validate wasm binary (browsers must accept it)
+        run: |
+          node -e "const fs=require('fs'); if(!WebAssembly.validate(fs.readFileSync('web/dist/oj_game_bg.wasm'))) { console.error('INVALID wasm'); process.exit(1); } console.log('wasm valid');"
+
+      - name: Configure Pages (auto-enable on first run)
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -32,9 +32,19 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "orbit jumper".into(),
+                // Web: bind to the page's canvas and track its size, so a
+                // phone browser gets the phone layout and rotation
+                // relayouts live. Touch stays ours (no page scrolling).
+                #[cfg(target_arch = "wasm32")]
+                canvas: Some("#game".into()),
+                #[cfg(target_arch = "wasm32")]
+                fit_canvas_to_parent: true,
+                #[cfg(target_arch = "wasm32")]
+                prevent_default_event_handling: true,
                 // OJ_WIN=390x844 boots at phone dimensions — the dev hook
                 // behind the responsive-layout tests. Resizing the window
                 // relayouts live either way.
+                #[cfg(not(target_arch = "wasm32"))]
                 resolution: std::env::var("OJ_WIN")
                     .ok()
                     .and_then(|s| {
