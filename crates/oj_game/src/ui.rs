@@ -103,6 +103,7 @@ struct HudVm {
     weapon_hints: String,
     target: String,
     arm: String,
+    hull_warn: String,
 }
 
 #[derive(Resource, Clone)]
@@ -269,6 +270,19 @@ const HUD_XAML: &str = r##"
       </StackPanel>
       <ProgressBar Width="214" Height="5" Maximum="100" Value="{Binding hull}"
                    Foreground="#FF7043" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
+      <TextBlock Text="{Binding hull_warn}" Foreground="#FF5459" FontSize="10" Margin="0,4,0,0">
+        <TextBlock.Triggers>
+          <EventTrigger RoutedEvent="Loaded">
+            <BeginStoryboard>
+              <Storyboard>
+                <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                 From="1.0" To="0.25" Duration="0:0:0.35"
+                                 RepeatBehavior="Forever" AutoReverse="True"/>
+              </Storyboard>
+            </BeginStoryboard>
+          </EventTrigger>
+        </TextBlock.Triggers>
+      </TextBlock>
     </StackPanel>
   </Border>
 
@@ -276,7 +290,19 @@ const HUD_XAML: &str = r##"
     <StackPanel>
       <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10"/>
       <TextBlock Text="{Binding arm}" Foreground="#FFB454" FontSize="10"/>
-      <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="10"/>
+      <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="10">
+      <TextBlock.Triggers>
+        <EventTrigger RoutedEvent="Loaded">
+          <BeginStoryboard>
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                               From="1.0" To="0.3" Duration="0:0:0.45"
+                               RepeatBehavior="Forever" AutoReverse="True"/>
+            </Storyboard>
+          </BeginStoryboard>
+        </EventTrigger>
+      </TextBlock.Triggers>
+      </TextBlock>
       <TextBlock Text="VELOCITY" Foreground="#5A6472" FontSize="10" Margin="0,6,0,0"/>
       <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="17" FontWeight="Bold"/>
       <Rectangle Width="214" Height="1" Fill="#22313C" Margin="0,7,0,7"/>
@@ -311,7 +337,19 @@ const PANEL_XAML: &str = r##"
         Padding="12,10" Width="@PW">
   <StackPanel>
     <TextBlock Text="VESSEL" Foreground="#00E5FF" FontSize="14"/>
-    <Rectangle Width="@PS" Height="1" Fill="#00E5FF" Margin="0,5,0,8"/>
+    <Rectangle Width="@PS" Height="1" Fill="#00E5FF" Margin="0,5,0,8" HorizontalAlignment="Left">
+      <Rectangle.Triggers>
+        <EventTrigger RoutedEvent="Loaded">
+          <BeginStoryboard>
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetProperty="Width"
+                               From="0" To="@PS" Duration="0:0:0.45"
+                               FillBehavior="Stop"/>
+            </Storyboard>
+          </BeginStoryboard>
+        </EventTrigger>
+      </Rectangle.Triggers>
+    </Rectangle>
 
     <ItemsControl ItemsSource="{Binding rows}">
       <ItemsControl.ItemTemplate>
@@ -375,7 +413,19 @@ const PANEL_XAML: &str = r##"
     <ItemsControl ItemsSource="{Binding feed}">
       <ItemsControl.ItemTemplate>
         <DataTemplate>
-          <TextBlock Text="{Binding}" Foreground="#5A6472" FontSize="10" Margin="0,2,0,0"/>
+          <TextBlock Text="{Binding}" Foreground="#5A6472" FontSize="10" Margin="0,2,0,0">
+            <TextBlock.Triggers>
+              <EventTrigger RoutedEvent="Loaded">
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                     From="0.0" To="1.0" Duration="0:0:0.6"
+                                     FillBehavior="Stop"/>
+                  </Storyboard>
+                </BeginStoryboard>
+              </EventTrigger>
+            </TextBlock.Triggers>
+          </TextBlock>
         </DataTemplate>
       </ItemsControl.ItemTemplate>
     </ItemsControl>
@@ -393,7 +443,19 @@ const COCKPIT_TAPE_XAML: &str = r##"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         HorizontalAlignment="@TA" VerticalAlignment="Top" Margin="@TPM"
         Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="14,4">
-  <TextBlock Text="{Binding heading}" Foreground="#00E5FF" FontSize="12"/>
+  <TextBlock Text="{Binding heading}" Foreground="#00E5FF" FontSize="12">
+    <TextBlock.Triggers>
+      <EventTrigger RoutedEvent="Loaded">
+        <BeginStoryboard>
+          <Storyboard>
+            <ColorAnimation Storyboard.TargetProperty="Foreground"
+                            From="#00E5FF" To="#B5F6FF" Duration="0:0:1.8"
+                            RepeatBehavior="Forever" AutoReverse="True"/>
+          </Storyboard>
+        </BeginStoryboard>
+      </EventTrigger>
+    </TextBlock.Triggers>
+  </TextBlock>
 </Border>
 "##;
 
@@ -401,7 +463,25 @@ const COCKPIT_RETICLE_XAML: &str = r##"
 <StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             HorizontalAlignment="Center" VerticalAlignment="Center">
-  <Ellipse Width="54" Height="54" Stroke="#8000E5FF" StrokeThickness="1" Fill="#00000000"/>
+  <Ellipse Width="54" Height="54" Stroke="#8000E5FF" StrokeThickness="1" Fill="#00000000">
+    <Ellipse.Triggers>
+      <EventTrigger RoutedEvent="Loaded">
+        <BeginStoryboard>
+          <Storyboard>
+            <DoubleAnimation Storyboard.TargetProperty="Width"
+                             From="50" To="58" Duration="0:0:1.6"
+                             RepeatBehavior="Forever" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetProperty="Height"
+                             From="50" To="58" Duration="0:0:1.6"
+                             RepeatBehavior="Forever" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                             From="0.55" To="1.0" Duration="0:0:1.6"
+                             RepeatBehavior="Forever" AutoReverse="True"/>
+          </Storyboard>
+        </BeginStoryboard>
+      </EventTrigger>
+    </Ellipse.Triggers>
+  </Ellipse>
 </StackPanel>
 "##;
 
@@ -409,7 +489,19 @@ const COCKPIT_THREAT_XAML: &str = r##"
 <StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             HorizontalAlignment="Right" VerticalAlignment="Top" Margin="@HM">
-  <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="11"/>
+  <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="11">
+  <TextBlock.Triggers>
+        <EventTrigger RoutedEvent="Loaded">
+          <BeginStoryboard>
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                               From="1.0" To="0.3" Duration="0:0:0.45"
+                               RepeatBehavior="Forever" AutoReverse="True"/>
+            </Storyboard>
+          </BeginStoryboard>
+        </EventTrigger>
+      </TextBlock.Triggers>
+  </TextBlock>
 </StackPanel>
 "##;
 
@@ -439,12 +531,35 @@ const COCKPIT_CONSOLE_XAML: &str = r##"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="@KM"
         Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="18,6">
+  <Border.Triggers>
+    <EventTrigger RoutedEvent="Loaded">
+      <BeginStoryboard>
+        <Storyboard>
+          <ColorAnimation Storyboard.TargetProperty="BorderBrush"
+                          From="#1E3A44" To="#00E5FF" Duration="0:0:2.6"
+                          RepeatBehavior="Forever" AutoReverse="True"/>
+        </Storyboard>
+      </BeginStoryboard>
+    </EventTrigger>
+  </Border.Triggers>
   <StackPanel>
     <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="16" FontWeight="Bold"
                HorizontalAlignment="Center"/>
     <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10" Margin="0,2,0,0"/>
     <TextBlock Text="{Binding target}" Foreground="#FF5459" FontSize="10" Margin="0,2,0,0"
-               HorizontalAlignment="Center"/>
+               HorizontalAlignment="Center">
+    <TextBlock.Triggers>
+        <EventTrigger RoutedEvent="Loaded">
+          <BeginStoryboard>
+            <Storyboard>
+              <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                               From="1.0" To="0.45" Duration="0:0:0.3"
+                               RepeatBehavior="Forever" AutoReverse="True"/>
+            </Storyboard>
+          </BeginStoryboard>
+        </EventTrigger>
+      </TextBlock.Triggers>
+    </TextBlock>
     <TextBlock Text="{Binding arm}" Foreground="#FFB454" FontSize="10" Margin="0,2,0,0"
                HorizontalAlignment="Center"/>
   </StackPanel>
@@ -476,6 +591,19 @@ const HUD_COCKPIT_XAML: &str = r##"
       </StackPanel>
       <ProgressBar Width="214" Height="5" Maximum="100" Value="{Binding hull}"
                    Foreground="#FF7043" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
+      <TextBlock Text="{Binding hull_warn}" Foreground="#FF5459" FontSize="10" Margin="0,4,0,0">
+        <TextBlock.Triggers>
+          <EventTrigger RoutedEvent="Loaded">
+            <BeginStoryboard>
+              <Storyboard>
+                <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                 From="1.0" To="0.25" Duration="0:0:0.35"
+                                 RepeatBehavior="Forever" AutoReverse="True"/>
+              </Storyboard>
+            </BeginStoryboard>
+          </EventTrigger>
+        </TextBlock.Triggers>
+      </TextBlock>
     </StackPanel>
   </Border>
   <TextBlock Text="{Binding weapon_hints}" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
@@ -543,7 +671,7 @@ const TOUCH_TOPBAR_XAML: &str = r##"
               <Path x:Name="frame" Width="66" Height="42" Stretch="Fill"
                     Fill="#D8071018" Stroke="#00E5FF" StrokeThickness="1"
                     Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
-              <Rectangle Width="26" Height="2" Fill="#00E5FF"
+              <Rectangle x:Name="notch" Width="26" Height="2" Fill="#00E5FF"
                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
               <Ellipse x:Name="led" Width="5" Height="5" Fill="#00E5FF"
                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
@@ -563,9 +691,11 @@ const TOUCH_TOPBAR_XAML: &str = r##"
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#5900E5FF"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#C800E5FF"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -580,7 +710,7 @@ const TOUCH_TOPBAR_XAML: &str = r##"
               <Path x:Name="frame" Width="66" Height="42" Stretch="Fill"
                     Fill="#D8141008" Stroke="#FFB454" StrokeThickness="1"
                     Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
-              <Rectangle Width="26" Height="2" Fill="#FFB454"
+              <Rectangle x:Name="notch" Width="26" Height="2" Fill="#FFB454"
                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
               <Ellipse x:Name="led" Width="5" Height="5" Fill="#FFB454"
                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
@@ -600,9 +730,11 @@ const TOUCH_TOPBAR_XAML: &str = r##"
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#59FFB454"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#C8FFB454"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -617,7 +749,7 @@ const TOUCH_TOPBAR_XAML: &str = r##"
               <Path x:Name="frame" Width="66" Height="42" Stretch="Fill"
                     Fill="#D80E0A18" Stroke="#B48CFF" StrokeThickness="1"
                     Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
-              <Rectangle Width="26" Height="2" Fill="#B48CFF"
+              <Rectangle x:Name="notch" Width="26" Height="2" Fill="#B48CFF"
                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
               <Ellipse x:Name="led" Width="5" Height="5" Fill="#B48CFF"
                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
@@ -637,9 +769,11 @@ const TOUCH_TOPBAR_XAML: &str = r##"
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#59B48CFF"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#C8B48CFF"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -688,7 +822,7 @@ const TOUCH_TOPBAR_COCKPIT_XAML: &str = r##"
               <Path x:Name="frame" Width="66" Height="42" Stretch="Fill"
                     Fill="#D80E0A18" Stroke="#B48CFF" StrokeThickness="1"
                     Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
-              <Rectangle Width="26" Height="2" Fill="#B48CFF"
+              <Rectangle x:Name="notch" Width="26" Height="2" Fill="#B48CFF"
                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
               <Ellipse x:Name="led" Width="5" Height="5" Fill="#B48CFF"
                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
@@ -708,9 +842,11 @@ const TOUCH_TOPBAR_COCKPIT_XAML: &str = r##"
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#59B48CFF"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#C8B48CFF"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -740,7 +876,7 @@ const TOUCH_THRUST_XAML: &str = r##"
               <Path x:Name="frame" Width="66" Height="52" Stretch="Fill"
                     Fill="#D8081514" Stroke="#00FFD4" StrokeThickness="1"
                     Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
-              <Rectangle Width="26" Height="2" Fill="#00FFD4"
+              <Rectangle x:Name="notch" Width="26" Height="2" Fill="#00FFD4"
                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
               <Ellipse x:Name="led" Width="5" Height="5" Fill="#00FFD4"
                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
@@ -760,9 +896,11 @@ const TOUCH_THRUST_XAML: &str = r##"
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#5900FFD4"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#C800FFD4"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -773,7 +911,19 @@ const TOUCH_THRUST_XAML: &str = r##"
   <Border Background="#C8060C12" BorderBrush="#12333A" BorderThickness="1" Padding="8,6">
     <StackPanel>
       <StackPanel Orientation="Horizontal">
-        <Rectangle Width="12" Height="2" Fill="#00FFD4" Margin="0,5,6,0"/>
+        <Rectangle Width="12" Height="2" Fill="#00FFD4" Margin="0,5,6,0">
+          <Rectangle.Triggers>
+            <EventTrigger RoutedEvent="Loaded">
+              <BeginStoryboard>
+                <Storyboard>
+                  <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                   From="0.3" To="1.0" Duration="0:0:2.2"
+                                   RepeatBehavior="Forever" AutoReverse="True"/>
+                </Storyboard>
+              </BeginStoryboard>
+            </EventTrigger>
+          </Rectangle.Triggers>
+        </Rectangle>
         <TextBlock Text="NAV_CTRL_L" Foreground="#3E6A66" FontSize="9"/>
       </StackPanel>
       <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
@@ -816,7 +966,7 @@ const TOUCH_WEAPONS_XAML: &str = r##"
               <Path x:Name="frame" Width="66" Height="52" Stretch="Fill"
                     Fill="#D8140B08" Stroke="#FF7043" StrokeThickness="1"
                     Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
-              <Rectangle Width="26" Height="2" Fill="#FF7043"
+              <Rectangle x:Name="notch" Width="26" Height="2" Fill="#FF7043"
                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
               <Ellipse x:Name="led" Width="5" Height="5" Fill="#FF7043"
                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
@@ -836,9 +986,11 @@ const TOUCH_WEAPONS_XAML: &str = r##"
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#59FF7043"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#C8FF7043"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -853,7 +1005,7 @@ const TOUCH_WEAPONS_XAML: &str = r##"
               <Path x:Name="frame" Width="66" Height="52" Stretch="Fill"
                     Fill="#D80E0A18" Stroke="#B48CFF" StrokeThickness="1"
                     Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
-              <Rectangle Width="26" Height="2" Fill="#B48CFF"
+              <Rectangle x:Name="notch" Width="26" Height="2" Fill="#B48CFF"
                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
               <Ellipse x:Name="led" Width="5" Height="5" Fill="#B48CFF"
                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
@@ -873,9 +1025,11 @@ const TOUCH_WEAPONS_XAML: &str = r##"
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#59B48CFF"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#C8B48CFF"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -886,7 +1040,19 @@ const TOUCH_WEAPONS_XAML: &str = r##"
   <Border Background="#C8060C12" BorderBrush="#12333A" BorderThickness="1" Padding="8,6">
     <StackPanel>
       <StackPanel Orientation="Horizontal">
-        <Rectangle Width="12" Height="2" Fill="#FF7043" Margin="0,5,6,0"/>
+        <Rectangle Width="12" Height="2" Fill="#FF7043" Margin="0,5,6,0">
+          <Rectangle.Triggers>
+            <EventTrigger RoutedEvent="Loaded">
+              <BeginStoryboard>
+                <Storyboard>
+                  <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                   From="0.3" To="1.0" Duration="0:0:2.2"
+                                   RepeatBehavior="Forever" AutoReverse="True"/>
+                </Storyboard>
+              </BeginStoryboard>
+            </EventTrigger>
+          </Rectangle.Triggers>
+        </Rectangle>
         <TextBlock Text="WPN_SYST_R" Foreground="#6A4A3E" FontSize="9"/>
       </StackPanel>
       @WROW1
@@ -943,10 +1109,21 @@ const EXIT_ORBIT_XAML: &str = r##"
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Grid Width="96" Height="44">
+              <Grid.Triggers>
+                <EventTrigger RoutedEvent="Loaded">
+                  <BeginStoryboard>
+                    <Storyboard>
+                      <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                       From="1.0" To="0.68" Duration="0:0:0.45"
+                                       RepeatBehavior="Forever" AutoReverse="True"/>
+                    </Storyboard>
+                  </BeginStoryboard>
+                </EventTrigger>
+              </Grid.Triggers>
               <Path x:Name="frame" Width="96" Height="44" Stretch="Fill"
                     Fill="#D8120A08" Stroke="#FFB454" StrokeThickness="1"
                     Data="M 10,0 L 86,0 L 96,10 L 96,34 L 86,44 L 10,44 L 0,34 L 0,10 Z"/>
-              <Rectangle Width="30" Height="2" Fill="#FFB454"
+              <Rectangle x:Name="notch" Width="30" Height="2" Fill="#FFB454"
                          HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
               <Ellipse x:Name="led" Width="5" Height="5" Fill="#FFB454"
                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
@@ -966,9 +1143,11 @@ const EXIT_ORBIT_XAML: &str = r##"
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#59FFB454"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="frame" Property="Fill" Value="#C8FFB454"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -1544,6 +1723,11 @@ fn update_hud(
     model.0.set_contacts(contacts.into_iter().map(|(_, c)| c).take(6).collect());
     model.0.set_target(target_line);
     model.0.set_weapon_hints(Armament::of(&ship_upgrades).hints());
+    model.0.set_hull_warn(if ship.hull < 25.0 {
+        "!! HULL CRITICAL".into()
+    } else {
+        String::new()
+    });
     model.0.set_arm(match arm.phase {
         crate::solar::ArmPhase::Stowed => String::new(),
         crate::solar::ArmPhase::Deploying => ">> SOLAR ARM EXTENDING — WEAPONS OFFLINE".into(),
