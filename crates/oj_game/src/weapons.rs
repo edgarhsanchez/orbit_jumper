@@ -474,6 +474,9 @@ fn reap_hulls(
             continue;
         }
         run.kills += 1;
+        // Kill credit scales with the victim's bounty, which scales with
+        // its difficulty tier — bosses and elites pay what they cost.
+        run.combat_score += bounty.map_or(25, |b| b.0) * 12;
         commands.entity(entity).despawn();
         let mesh = meshes.add(Cuboid::new(3.0, 3.0, 3.0).mesh());
         let mat = materials.add(StandardMaterial {

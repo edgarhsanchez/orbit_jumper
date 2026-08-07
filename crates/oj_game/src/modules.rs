@@ -9,7 +9,7 @@ use oj_materials::Element;
 use oj_orbits::Vec3d;
 use oj_universe::SunClass;
 
-use crate::sim::{DT, Ship, SimClock, SunBody, SystemScoped, TIME_WARP};
+use crate::sim::{DT, Ship, SimClock, SunBody, SystemScoped};
 use crate::{GameUniverse, SimPos};
 
 // ---------------------------------------------------------------------------
@@ -68,8 +68,13 @@ pub struct RunScore {
     pub salvage_value: u64,
     /// Clean gravity assists flown (SOI transit, no thrust, net speed gain).
     pub assists: u32,
-    /// Practice drones (and later, ships) destroyed.
+    /// Hostiles destroyed (count; the VALUE of each kill goes to
+    /// `combat_score`).
     pub kills: u32,
+    /// Bounty-weighted kill credit — the dominant score term. A tougher
+    /// enemy is worth proportionally more, so leveling is paced by what
+    /// you can defeat, not by how long you idle.
+    pub combat_score: u64,
     hits: u32,
     /// Last-seen ship energy, for attributing positive deltas to harvest.
     last_energy: Option<f64>,
@@ -77,13 +82,17 @@ pub struct RunScore {
 
 impl RunScore {
     pub fn total(&self) -> u64 {
+        // Survival pays real seconds, not warped sim seconds — the old
+        // 1 point per SIM second (600/s wall-clock) drowned every other
+        // source and let a parked ship out-level a fighting one.
         (self.seconds_survived as u64)
-            + (self.energy_harvested as u64) * 2
+            + (self.energy_harvested as u64)
             + self.suns_survived as u64 * 500
             + self.salvage_value * 10
             + self.assists as u64 * 1000
-            + self.kills as u64 * 300
-            + self.hits as u64 * 5
+            + self.combat_score
+            + self.kills as u64 * 50
+            + self.hits as u64 * 2
     }
 
     pub fn score_hit(&mut self) {
@@ -141,7 +150,7 @@ fn tick_score(mut run: ResMut<RunScore>, ships: Query<&Ship>) {
         run.last_energy = None;
         return;
     };
-    run.seconds_survived += DT * TIME_WARP;
+    run.seconds_survived += DT;
     if let Some(last) = run.last_energy {
         let delta = ship.energy - last;
         if delta > 0.0 {

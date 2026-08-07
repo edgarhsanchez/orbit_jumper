@@ -1302,7 +1302,16 @@ fn update_hud(
         Res<crate::GameUniverse>,
         Res<crate::travel::SunAtlas>,
         Res<crate::sim::ShipStyle>,
-        Query<(Entity, &crate::SimPos, &crate::SimVel), With<crate::aliens::AlienShip>>,
+        Query<
+            (
+                Entity,
+                &crate::SimPos,
+                &crate::SimVel,
+                Option<&crate::aliens::Dreadnought>,
+                Option<&crate::aliens::Elite>,
+            ),
+            With<crate::aliens::AlienShip>,
+        >,
         ResMut<crate::travel::MapRows>,
         Res<crate::weapons::TargetLock>,
     ),
@@ -1354,7 +1363,10 @@ fn update_hud(
 
     model.0.set_style(style_res.label());
     let raiders = raider_q.iter().count();
-    model.0.set_threat(if raiders > 0 {
+    let boss_present = raider_q.iter().any(|(_, _, _, boss, _)| boss.is_some());
+    model.0.set_threat(if boss_present {
+        "!! DREADNOUGHT IN-SYSTEM".into()
+    } else if raiders > 0 {
         format!("!! {raiders} RAIDER{} IN-SYSTEM", if raiders == 1 { "" } else { "S" })
     } else {
         String::new()
@@ -1365,22 +1377,28 @@ fn update_hud(
     // locked vessel is flagged and drives the console target line.
     let mut target_line = String::new();
     let mut contacts: Vec<(f64, ContactVm)> = Vec::new();
-    for (i, (entity, a_pos, a_vel)) in raider_q.iter().enumerate() {
+    for (i, (entity, a_pos, a_vel, boss, elite)) in raider_q.iter().enumerate() {
         let rel = a_pos.0 - ship_pos.0;
         let dist = rel.length();
         let rel_v = a_vel.0 - vel.0;
         let closing = if dist > 1.0 { -(rel.dot(rel_v)) / dist } else { 0.0 };
         let in_laser = dist < 6.0e9;
         let locked = lock.0 == Some(entity);
+        let callsign = if boss.is_some() {
+            "DREADNOUGHT".to_string()
+        } else if elite.is_some() {
+            format!("ELITE RAIDER-{}", i + 1)
+        } else {
+            format!("RAIDER-{}", i + 1)
+        };
         if locked {
-            target_line = format!("TGT LOCK: RAIDER-{} · {:.2} GM", i + 1, dist / 1.0e9);
+            target_line = format!("TGT LOCK: {callsign} · {:.2} GM", dist / 1.0e9);
         }
         contacts.push((
             dist,
             ContactVm {
                 name: format!(
-                    "RAIDER-{}{}{}",
-                    i + 1,
+                    "{callsign}{}{}",
                     if locked { "  [LOCKED]" } else { "" },
                     if in_laser { "  [IN RANGE]" } else { "" }
                 ),

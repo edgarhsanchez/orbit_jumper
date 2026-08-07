@@ -161,7 +161,10 @@ fn apply_to_new_ships(upgrades: Res<ShipUpgrades>, mut ships: Query<&mut Ship, A
 }
 
 /// Pilot level: an infinite, sublinear curve over lifetime + current
-/// score. Every point ever earned counts toward it.
+/// score. Score is combat-dominant (bounty-weighted kills), so climbing
+/// this curve means defeating the progressively harder enemies each
+/// level summons — level N costs 2000·(N-1)² points, and only high-tier
+/// bounties pay that fast.
 pub fn pilot_level(lifetime_score: u64) -> u32 {
     ((lifetime_score as f64 / 2000.0).sqrt() as u32) + 1
 }

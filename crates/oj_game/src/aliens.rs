@@ -18,11 +18,31 @@ use crate::upgrades::pilot_level;
 use crate::weapons::{Bounty, Hull};
 use crate::{SimPos, SimVel};
 
-/// A hostile ship.
+/// A hostile ship. Combat stats are set at spawn from the pilot level of
+/// the moment, so every wave is harder than the last: more damage per
+/// bolt, faster bolts, shorter cooldowns, quicker approaches.
 #[derive(Component)]
 pub struct AlienShip {
     fire_cooldown: f64,
+    cooldown: f64,
+    damage: f64,
+    bolt_speed: f64,
+    approach: f64,
+    /// Bolts per trigger pull — dreadnoughts volley.
+    volley: u32,
 }
+
+/// Elite raider: a rarer, heavier variant that appears at higher pilot
+/// levels. Marker drives the contacts label and nothing else — the stats
+/// are already baked into `AlienShip`.
+#[derive(Component)]
+pub struct Elite;
+
+/// The boss. One at a time, every few pilot levels, announced in the
+/// threat line. Same AI loop as a raider — what changes is mass: a dozen
+/// raiders' worth of hull, volley fire, and a bounty to match.
+#[derive(Component)]
+pub struct Dreadnought;
 
 /// A plasma bolt in flight.
 #[derive(Component)]
@@ -40,6 +60,12 @@ const BOLT_FUSE: f64 = 5.0e8;
 
 #[derive(Resource)]
 struct RaiderClock(f64);
+
+/// When the next dreadnought is owed (pilot level threshold).
+#[derive(Resource)]
+struct BossClock {
+    next_level: u32,
+}
 
 /// One dot of a predicted raider path.
 #[derive(Component)]
@@ -62,6 +88,7 @@ pub struct AliensPlugin;
 impl Plugin for AliensPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(RaiderClock(8.0))
+            .insert_resource(BossClock { next_level: 5 })
             .init_resource::<TrajPool>()
             .add_systems(
                 FixedUpdate,
@@ -75,7 +102,9 @@ impl Plugin for AliensPlugin {
 #[allow(clippy::too_many_arguments)]
 fn spawn_raiders(
     mut clock: ResMut<RaiderClock>,
+    mut boss_clock: ResMut<BossClock>,
     aliens: Query<(), With<AlienShip>>,
+    bosses: Query<(), With<Dreadnought>>,
     ships: Query<(&SimPos, &SimVel), With<Ship>>,
     run: Res<RunScore>,
     career: Res<CareerScore>,
@@ -92,10 +121,6 @@ fn spawn_raiders(
     let Ok((ship_pos, ship_vel)) = ships.single() else { return };
 
     let level = pilot_level(career.total_score + run.total());
-    let pack_cap = (1 + level / 3).min(6) as usize;
-    if aliens.iter().count() >= pack_cap {
-        return;
-    }
 
     // Arrive from a seed-random bearing, well outside weapons range,
     // velocity matched so the approach is deliberate, not a flyby.
@@ -106,17 +131,146 @@ fn spawn_raiders(
     let dist = rng.range(1.6e10, 2.4e10);
     let pos = ship_pos.0 + Vec3d::new(bearing.cos() * dist, bearing.sin() * dist, 0.0);
 
-    let hp = 30.0 * (1.0 + level as f64 * 0.15);
-    let bounty = 40 + level as u64 * 8;
+    // Every few pilot levels the pack yields to a DREADNOUGHT: one at a
+    // time, a dozen raiders' worth of hull, volley fire, boss bounty.
+    if level >= boss_clock.next_level && bosses.iter().count() == 0 {
+        boss_clock.next_level = level + 5;
+        spawn_hostile(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            pos,
+            ship_vel.0,
+            HostileSpec::dreadnought(level),
+        );
+        info!("DREADNOUGHT inbound (level {level}); next owed at {}", boss_clock.next_level);
+        return;
+    }
+
+    let pack_cap = (1 + level / 3).min(6) as usize;
+    if aliens.iter().count() >= pack_cap {
+        return;
+    }
+
+    // Elites appear from level 6, more often the deeper you go.
+    let elite_chance = if level >= 6 {
+        (0.12 + 0.02 * level as f64).min(0.5)
+    } else {
+        0.0
+    };
+    let elite = rng.range(0.0, 1.0) < elite_chance;
+    let spec =
+        if elite { HostileSpec::elite(level) } else { HostileSpec::raider(level) };
+    spawn_hostile(&mut commands, &mut meshes, &mut materials, pos, ship_vel.0, spec);
+    info!(
+        "raider inbound (level {level}, pack cap {pack_cap}, elite {elite})"
+    );
+}
+
+/// Everything that varies between a raider, an elite and a dreadnought.
+struct HostileSpec {
+    hp: f64,
+    bounty: u64,
+    damage: f64,
+    cooldown: f64,
+    bolt_speed: f64,
+    approach: f64,
+    scale: f32,
+    elite: bool,
+    boss: bool,
+}
+
+impl HostileSpec {
+    /// Baseline raider at a pilot level — every stat climbs with it.
+    fn raider(level: u32) -> Self {
+        let l = level as f64;
+        Self {
+            hp: 30.0 * (1.0 + l * 0.15),
+            bounty: 40 + level as u64 * 8,
+            damage: 6.0 * (1.0 + l * 0.10),
+            cooldown: (2.6 - 0.06 * l).max(1.2),
+            bolt_speed: 1.2e6 * (1.0 + l * 0.03).min(2.0),
+            approach: 6.0e5 * (1.0 + l * 0.02).min(1.8),
+            scale: 1.0,
+            elite: false,
+            boss: false,
+        }
+    }
+
+    fn elite(level: u32) -> Self {
+        let base = Self::raider(level);
+        Self {
+            hp: base.hp * 2.5,
+            bounty: base.bounty * 3,
+            damage: base.damage * 1.6,
+            cooldown: base.cooldown * 0.8,
+            bolt_speed: base.bolt_speed * 1.15,
+            approach: base.approach * 1.15,
+            scale: 1.45,
+            elite: true,
+            boss: false,
+        }
+    }
+
+    fn dreadnought(level: u32) -> Self {
+        let base = Self::raider(level);
+        Self {
+            hp: base.hp * 12.0,
+            bounty: base.bounty * 15,
+            damage: base.damage * 2.2,
+            cooldown: base.cooldown * 1.4,
+            bolt_speed: base.bolt_speed,
+            approach: base.approach * 0.7,
+            scale: 3.4,
+            elite: false,
+            boss: true,
+        }
+    }
+}
+
+fn spawn_hostile(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3d,
+    vel: Vec3d,
+    spec: HostileSpec,
+) {
+    let hp = spec.hp;
+    let bounty = spec.bounty;
+    // Elites run hot-blooded crimson; the dreadnought burns amber. A
+    // pilot should read the threat tier from the silhouette color alone.
+    let (hull_color, hull_glow, fin_color, fin_glow) = if spec.boss {
+        (
+            Color::srgb(0.85, 0.55, 0.2),
+            LinearRgba::rgb(1.4, 0.7, 0.1),
+            Color::srgb(0.9, 0.35, 0.2),
+            LinearRgba::rgb(1.2, 0.3, 0.1),
+        )
+    } else if spec.elite {
+        (
+            Color::srgb(0.95, 0.3, 0.35),
+            LinearRgba::rgb(1.5, 0.2, 0.25),
+            Color::srgb(0.85, 0.5, 0.2),
+            LinearRgba::rgb(1.0, 0.5, 0.1),
+        )
+    } else {
+        (
+            Color::srgb(0.45, 0.9, 0.5),
+            LinearRgba::rgb(0.15, 1.1, 0.3),
+            Color::srgb(0.75, 0.3, 0.85),
+            LinearRgba::rgb(0.7, 0.1, 0.9),
+        )
+    };
     let hull_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.45, 0.9, 0.5),
+        base_color: hull_color,
         metallic: 0.35,
-        emissive: LinearRgba::rgb(0.15, 1.1, 0.3),
+        emissive: hull_glow,
         ..default()
     });
     let fin_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.75, 0.3, 0.85),
-        emissive: LinearRgba::rgb(0.7, 0.1, 0.9),
+        base_color: fin_color,
+        emissive: fin_glow,
         ..default()
     });
     let core_mat = materials.add(StandardMaterial {
@@ -131,22 +285,34 @@ fn spawn_raiders(
         unlit: true,
         ..default()
     });
-    commands
-        .spawn((
-            SystemScoped,
-            AlienShip { fire_cooldown: 3.0 },
-            Hull { hp },
-            Bounty(bounty),
-            SimPos(pos),
-            SimVel(ship_vel.0),
-            BodyVel::default(),
-            // Angular strike frame: a 3-sided prism core — nothing about
-            // it reads friendly or aerodynamic.
-            Mesh3d(meshes.add(Cone::new(6.5, 13.0).mesh().resolution(3))),
-            MeshMaterial3d(hull_mat),
-            Transform::default(),
-        ))
-        .with_children(|alien| {
+    let mut root = commands.spawn((
+        SystemScoped,
+        AlienShip {
+            fire_cooldown: 3.0,
+            cooldown: spec.cooldown,
+            damage: spec.damage,
+            bolt_speed: spec.bolt_speed,
+            approach: spec.approach,
+            volley: if spec.boss { 3 } else { 1 },
+        },
+        Hull { hp },
+        Bounty(bounty),
+        SimPos(pos),
+        SimVel(vel),
+        BodyVel::default(),
+        // Angular strike frame: a 3-sided prism core — nothing about
+        // it reads friendly or aerodynamic. Tier picks the mass.
+        Mesh3d(meshes.add(Cone::new(6.5, 13.0).mesh().resolution(3))),
+        MeshMaterial3d(hull_mat),
+        Transform::from_scale(Vec3::splat(spec.scale)),
+    ));
+    if spec.elite {
+        root.insert(Elite);
+    }
+    if spec.boss {
+        root.insert(Dreadnought);
+    }
+    root.with_children(|alien| {
             // Jagged fin trio at 120-degree spacing.
             for k in 0..3 {
                 let a = std::f32::consts::TAU * k as f32 / 3.0;
@@ -175,8 +341,29 @@ fn spawn_raiders(
                     Transform::from_xyz(side * 2.6, 4.6, 0.8),
                 ));
             }
+            // The dreadnought reads as a different CLASS, not a bigger
+            // raider: dorsal spine, twin outrigger pods, extra eye row.
+            if spec.boss {
+                alien.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(1.4, 22.0, 1.4).mesh())),
+                    MeshMaterial3d(fin_mat.clone()),
+                    Transform::from_xyz(0.0, -4.0, 2.2),
+                ));
+                for side in [-1.0f32, 1.0] {
+                    alien.spawn((
+                        Mesh3d(meshes.add(Cuboid::new(3.0, 9.0, 3.0).mesh())),
+                        MeshMaterial3d(fin_mat.clone()),
+                        Transform::from_xyz(side * 7.5, -3.0, 0.0)
+                            .with_rotation(Quat::from_rotation_z(side * 0.12)),
+                    ));
+                    alien.spawn((
+                        Mesh3d(meshes.add(Sphere::new(1.1).mesh().ico(1).unwrap())),
+                        MeshMaterial3d(glow_mat.clone()),
+                        Transform::from_xyz(side * 4.6, -0.5, 1.4),
+                    ));
+                }
+            }
         });
-    info!("raider inbound (level {level}, pack cap {pack_cap})");
 }
 
 /// Seek the player; fire when in range; keep a fighting distance.
@@ -199,12 +386,13 @@ fn alien_ai(
         let dir = to_ship * (1.0 / dist);
 
         // Close to fighting range, then circle: chase point offsets
-        // sideways so raiders orbit the fight instead of ramming.
+        // sideways so raiders orbit the fight instead of ramming. The
+        // closing speed is a spawn-time stat — veterans close faster.
         let desired = if dist > FIRE_RANGE * 0.5 {
-            ship_vel.0 + dir * 6.0e5
+            ship_vel.0 + dir * alien.approach
         } else {
             let tangent = Vec3d::new(-dir.y, dir.x, 0.0);
-            ship_vel.0 + tangent * 4.0e5 + dir * 5.0e4
+            ship_vel.0 + tangent * (alien.approach * 0.66) + dir * 5.0e4
         };
         let dv = desired - vel.0;
         let a_max = 4.0e4 * TIME_WARP;
@@ -217,26 +405,36 @@ fn alien_ai(
         let angle = (to_ship.y).atan2(to_ship.x) as f32 - std::f32::consts::FRAC_PI_2;
         transform.rotation = Quat::from_rotation_z(angle);
 
-        // Fire.
+        // Fire. Damage, cadence and bolt speed are the ship's own stats;
+        // a dreadnought looses a spread volley instead of one bolt.
         alien.fire_cooldown -= DT;
         if alien.fire_cooldown <= 0.0 && dist < FIRE_RANGE {
-            alien.fire_cooldown = 2.5;
-            let lead = ship_pos.0 + (ship_vel.0 - vel.0) * (dist / 1.2e6);
+            alien.fire_cooldown = alien.cooldown;
+            let lead = ship_pos.0 + (ship_vel.0 - vel.0) * (dist / alien.bolt_speed);
             let aim = (lead - pos.0).normalized();
-            commands.spawn((
-                SystemScoped,
-                AlienBolt { damage: 7.0, ttl: 25.0 },
-                SimPos(pos.0 + aim * 4.0e8),
-                SimVel(vel.0 + aim * 1.2e6),
-                Mesh3d(meshes.add(Sphere::new(3.0).mesh().ico(1).unwrap())),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.9, 0.3, 1.0),
-                    emissive: LinearRgba::rgb(6.0, 1.2, 8.0),
-                    unlit: true,
-                    ..default()
-                })),
-                Transform::default(),
-            ));
+            let volley = alien.volley.max(1);
+            for i in 0..volley {
+                // Spread the volley in-plane: center bolt true, wings
+                // angled a few degrees out.
+                let spread = (i as f64 - (volley as f64 - 1.0) / 2.0) * 0.06;
+                let (s, c) = spread.sin_cos();
+                let aim_i =
+                    Vec3d::new(aim.x * c - aim.y * s, aim.x * s + aim.y * c, aim.z).normalized();
+                commands.spawn((
+                    SystemScoped,
+                    AlienBolt { damage: alien.damage, ttl: 25.0 },
+                    SimPos(pos.0 + aim_i * 4.0e8),
+                    SimVel(vel.0 + aim_i * alien.bolt_speed),
+                    Mesh3d(meshes.add(Sphere::new(3.0).mesh().ico(1).unwrap())),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.9, 0.3, 1.0),
+                        emissive: LinearRgba::rgb(6.0, 1.2, 8.0),
+                        unlit: true,
+                        ..default()
+                    })),
+                    Transform::default(),
+                ));
+            }
         }
     }
 }
