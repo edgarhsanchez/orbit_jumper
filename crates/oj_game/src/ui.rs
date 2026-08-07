@@ -86,6 +86,8 @@ struct HudVm {
     feed: Vec<String>,
     map: Vec<MapRowVm>,
     map_status: String,
+    level: String,
+    style: String,
 }
 
 #[derive(Resource, Clone)]
@@ -262,13 +264,17 @@ const HUD_XAML: &str = r##"
       <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="17" FontWeight="Bold"/>
       <Rectangle Width="214" Height="1" Fill="#22313C" Margin="0,7,0,7"/>
       <StackPanel Orientation="Horizontal">
-        <StackPanel Width="107">
+        <StackPanel Width="76">
           <TextBlock Text="SCORE" Foreground="#5A6472" FontSize="10"/>
           <TextBlock Text="{Binding score}" Foreground="#E0E2EB" FontSize="12"/>
         </StackPanel>
-        <StackPanel>
+        <StackPanel Width="76">
           <TextBlock Text="BEST" Foreground="#5A6472" FontSize="10"/>
           <TextBlock Text="{Binding best}" Foreground="#E0E2EB" FontSize="12"/>
+        </StackPanel>
+        <StackPanel>
+          <TextBlock Text="PILOT" Foreground="#5A6472" FontSize="10"/>
+          <TextBlock Text="{Binding level}" Foreground="#00E5FF" FontSize="12"/>
         </StackPanel>
       </StackPanel>
       <TextBlock Text="SALVAGE" Foreground="#5A6472" FontSize="10" Margin="0,5,0,0"/>
@@ -307,6 +313,17 @@ const PANEL_XAML: &str = r##"
         </DataTemplate>
       </ItemsControl.ItemTemplate>
     </ItemsControl>
+
+    <TextBlock Text="SHIP YARD" Foreground="#5A6472" FontSize="10" Margin="0,12,0,3"/>
+    <TextBlock Text="{Binding style}" Foreground="#00E5FF" FontSize="11"/>
+    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+      <Button Content="FRAME" Command="style_frame" Background="#0B1B22" BorderBrush="#00E5FF"
+              Foreground="#00E5FF" FontSize="10" Padding="8,3" Margin="0,0,6,0"/>
+      <Button Content="PAINT" Command="style_paint" Background="#0B1B22" BorderBrush="#00E5FF"
+              Foreground="#00E5FF" FontSize="10" Padding="8,3" Margin="0,0,6,0"/>
+      <Button Content="ACCENT" Command="style_accent" Background="#0B1B22" BorderBrush="#00E5FF"
+              Foreground="#00E5FF" FontSize="10" Padding="8,3"/>
+    </StackPanel>
 
     <TextBlock Text="STASH" Foreground="#5A6472" FontSize="10" Margin="0,12,0,3"/>
     <ItemsControl ItemsSource="{Binding stash}">
@@ -503,6 +520,21 @@ fn init_model(mut commands: Commands) {
             world.resource_mut::<crate::travel::PendingJump>().0 = Some(target);
         }
     });
+    // Ship-yard styling: cycle an index, persist, rebuild the visuals.
+    for (name, which) in [("style_frame", 0usize), ("style_paint", 1), ("style_accent", 2)] {
+        vm.on_command(name, move |world, _| {
+            {
+                let mut style = world.resource_mut::<crate::sim::ShipStyle>();
+                match which {
+                    0 => style.frame = (style.frame + 1) % crate::sim::SHIP_FRAMES.len(),
+                    1 => style.paint = (style.paint + 1) % crate::sim::SHIP_PAINTS.len(),
+                    _ => style.accent = (style.accent + 1) % crate::sim::SHIP_ACCENTS.len(),
+                }
+                style.save();
+            }
+            crate::sim::restyle_ship(world);
+        });
+    }
     commands.insert_resource(HudModel(vm));
 }
 
@@ -672,6 +704,7 @@ fn update_hud(
     flash: Res<crate::achievements::LastUnlock>,
     game: Res<crate::GameUniverse>,
     atlas: Res<crate::travel::SunAtlas>,
+    style_res: Res<crate::sim::ShipStyle>,
     mut map_rows: ResMut<crate::travel::MapRows>,
 ) {
     let (Some(model), Ok((ship, vel, nav))) = (model, ships.single()) else {
@@ -711,8 +744,13 @@ fn update_hud(
     model.0.set_hull_text(format!("{:.0}/100", ship.hull));
     model.0.set_score(format!("{}", run.total()));
     model.0.set_best(format!("{}", career.best_run));
+    model.0.set_level(format!(
+        "LVL {}",
+        crate::upgrades::pilot_level(career.total_score + run.total())
+    ));
     model.0.set_salvage(format!("{} CR", run.salvage_value));
 
+    model.0.set_style(style_res.label());
     if let Ok(sun) = suns.single() {
         model.0.set_sun_class(if study.revealed {
             format!(

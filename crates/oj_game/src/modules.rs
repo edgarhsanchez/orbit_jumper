@@ -261,6 +261,7 @@ fn collect_wrecks(
 fn respawn(
     ships: Query<(), With<Ship>>,
     game: Res<GameUniverse>,
+    style: Res<crate::sim::ShipStyle>,
     mut study: ResMut<StudyState>,
     _clock: Res<SimClock>,
     mut commands: Commands,
@@ -285,6 +286,7 @@ fn respawn(
         &mut materials,
         Vec3d::new(r, 0.0, 0.0),
         Vec3d::new(0.0, v, 0.0),
+        *style,
     );
 }
 

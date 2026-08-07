@@ -18,6 +18,7 @@ pub struct SimPlugin;
 impl Plugin for SimPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GameUniverse>()
+            .insert_resource(ShipStyle::load())
             .init_resource::<SimClock>()
             .add_systems(Startup, spawn_current_system)
             .add_systems(
@@ -87,7 +88,7 @@ pub struct SunBody {
 }
 
 /// The player's vessel.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct Ship {
     pub energy: f64,
     pub energy_max: f64,
@@ -164,6 +165,7 @@ pub fn orbit_rings(radius: f64, soi: f64) -> Vec<f64> {
 fn spawn_current_system(
     mut commands: Commands,
     game: Res<GameUniverse>,
+    game_style: Res<ShipStyle>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -181,7 +183,8 @@ fn spawn_current_system(
         .map(|p| p.orbit.semi_major * 0.6)
         .unwrap_or(1.0e11);
     let v = circular_speed(mu, r);
-    spawn_ship(commands.reborrow(), &mut meshes, &mut materials, Vec3d::new(r, 0.0, 0.0), Vec3d::new(0.0, v, 0.0));
+    let style = *game_style;
+    spawn_ship(commands.reborrow(), &mut meshes, &mut materials, Vec3d::new(r, 0.0, 0.0), Vec3d::new(0.0, v, 0.0), style);
 
     // Camera works in RENDER units (sim / 1e7): the ship rides at the
     // render origin; orbits live in the XY plane, so the view is
@@ -497,6 +500,58 @@ fn ring_hover_off(
 #[derive(Component)]
 pub struct EngineFlame;
 
+/// Hull silhouettes the yard can build.
+pub const SHIP_FRAMES: [&str; 3] = ["DART", "LANCE", "HAMMER"];
+/// Paint schemes: (name, base color, glow).
+pub const SHIP_PAINTS: [(&str, (f32, f32, f32), (f32, f32, f32)); 5] = [
+    ("STEEL", (0.75, 0.82, 0.9), (0.35, 0.5, 0.7)),
+    ("EMBER", (0.9, 0.55, 0.35), (0.9, 0.3, 0.08)),
+    ("VIRIDIAN", (0.45, 0.85, 0.6), (0.1, 0.7, 0.35)),
+    ("VIOLET", (0.7, 0.55, 0.95), (0.45, 0.2, 0.9)),
+    ("AURUM", (0.95, 0.8, 0.4), (0.9, 0.6, 0.1)),
+];
+/// Accent (wing/nozzle) schemes.
+pub const SHIP_ACCENTS: [(&str, (f32, f32, f32), (f32, f32, f32)); 4] = [
+    ("CYAN", (0.25, 0.75, 0.85), (0.05, 0.5, 0.6)),
+    ("CRIMSON", (0.85, 0.3, 0.35), (0.6, 0.05, 0.1)),
+    ("ICE", (0.8, 0.9, 1.0), (0.4, 0.55, 0.8)),
+    ("SOL", (0.95, 0.75, 0.3), (0.8, 0.5, 0.05)),
+];
+
+/// The pilot's ship styling, persisted across sessions.
+#[derive(Resource, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct ShipStyle {
+    pub frame: usize,
+    pub paint: usize,
+    pub accent: usize,
+}
+
+fn style_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("orbit_jumper_style.ron")
+}
+
+impl ShipStyle {
+    pub fn load() -> Self {
+        std::fs::read_to_string(style_path())
+            .ok()
+            .and_then(|s| ron::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+    pub fn save(&self) {
+        if let Ok(text) = ron::to_string(self) {
+            let _ = std::fs::write(style_path(), text);
+        }
+    }
+    pub fn label(&self) -> String {
+        format!(
+            "{} · {} / {}",
+            SHIP_FRAMES[self.frame % SHIP_FRAMES.len()],
+            SHIP_PAINTS[self.paint % SHIP_PAINTS.len()].0,
+            SHIP_ACCENTS[self.accent % SHIP_ACCENTS.len()].0,
+        )
+    }
+}
+
 /// Spawn the player's vessel: hull cone, swept wings, engine nozzle and
 /// a bloom-lit exhaust flame (hidden until burning). The assembly is
 /// render-space children of the hull, so orientation carries everything.
@@ -506,20 +561,32 @@ pub fn spawn_ship(
     materials: &mut Assets<StandardMaterial>,
     pos: Vec3d,
     vel: Vec3d,
+    style: ShipStyle,
 ) {
+    let (_, hull_rgb, hull_glow) = SHIP_PAINTS[style.paint % SHIP_PAINTS.len()];
+    let (_, acc_rgb, acc_glow) = SHIP_ACCENTS[style.accent % SHIP_ACCENTS.len()];
     let hull_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.75, 0.82, 0.9),
+        base_color: Color::srgb(hull_rgb.0, hull_rgb.1, hull_rgb.2),
         metallic: 0.3,
         perceptual_roughness: 0.4,
-        emissive: LinearRgba::rgb(0.35, 0.5, 0.7),
+        emissive: LinearRgba::rgb(hull_glow.0, hull_glow.1, hull_glow.2),
         ..default()
     });
     let wing_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.25, 0.75, 0.85),
+        base_color: Color::srgb(acc_rgb.0, acc_rgb.1, acc_rgb.2),
         metallic: 0.4,
-        emissive: LinearRgba::rgb(0.05, 0.5, 0.6),
+        emissive: LinearRgba::rgb(acc_glow.0, acc_glow.1, acc_glow.2),
         ..default()
     });
+    // Frame silhouettes: hull mesh + wing span vary per frame.
+    let (hull_mesh, wing_size, nozzle_y) = match style.frame % SHIP_FRAMES.len() {
+        // DART: the classic needle.
+        0 => (meshes.add(Cone::new(5.0, 18.0).mesh().resolution(16)), (16.0, 5.0), -10.0),
+        // LANCE: longer, slimmer, narrow wings.
+        1 => (meshes.add(Cone::new(3.6, 26.0).mesh().resolution(16)), (11.0, 7.0), -14.0),
+        // HAMMER: broad wedge with wide wings.
+        _ => (meshes.add(Cone::new(8.0, 14.0).mesh().resolution(6)), (22.0, 6.0), -8.0),
+    };
     let flame_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.6, 0.15),
         emissive: LinearRgba::rgb(14.0, 5.0, 0.8),
@@ -533,14 +600,14 @@ pub fn spawn_ship(
             OriginAnchor,
             SimPos(pos),
             SimVel(vel),
-            Mesh3d(meshes.add(Cone::new(5.0, 18.0).mesh().resolution(16))),
+            Mesh3d(hull_mesh),
             MeshMaterial3d(hull_mat.clone()),
             Transform::default(),
         ))
         .with_children(|ship| {
             // Swept wings.
             ship.spawn((
-                Mesh3d(meshes.add(Cuboid::new(16.0, 5.0, 1.6).mesh())),
+                Mesh3d(meshes.add(Cuboid::new(wing_size.0, wing_size.1, 1.6).mesh())),
                 MeshMaterial3d(wing_mat.clone()),
                 Transform::from_xyz(0.0, -6.0, 0.0),
             ));
@@ -548,18 +615,43 @@ pub fn spawn_ship(
             ship.spawn((
                 Mesh3d(meshes.add(Cuboid::new(6.0, 4.0, 3.0).mesh())),
                 MeshMaterial3d(wing_mat),
-                Transform::from_xyz(0.0, -10.0, 0.0),
+                Transform::from_xyz(0.0, nozzle_y, 0.0),
             ));
             // Exhaust flame, pointing aft; bloom does the glow.
             ship.spawn((
                 EngineFlame,
                 Mesh3d(meshes.add(Cone::new(3.2, 12.0).mesh().resolution(10))),
                 MeshMaterial3d(flame_mat),
-                Transform::from_xyz(0.0, -17.0, 0.0)
+                Transform::from_xyz(0.0, nozzle_y - 7.0, 0.0)
                     .with_rotation(Quat::from_rotation_z(std::f32::consts::PI)),
                 Visibility::Hidden,
             ));
         });
+}
+
+/// Rebuild the ship's visuals in the current style, preserving flight
+/// state and stats — the yard repaints, it does not recommission.
+pub fn restyle_ship(world: &mut World) {
+    let mut ships = world.query_filtered::<(Entity, &Ship, &SimPos, &crate::SimVel, &crate::command::NavState), ()>();
+    let Some((entity, ship, pos, vel, nav)) = ships.iter(world).next().map(|(e, s, p, v, n)| {
+        (e, s.clone(), *p, *v, *n)
+    }) else {
+        return;
+    };
+    world.entity_mut(entity).despawn();
+    let style = *world.resource::<ShipStyle>();
+    world.resource_scope(|world, mut meshes: Mut<Assets<Mesh>>| {
+        world.resource_scope(|world, mut materials: Mut<Assets<StandardMaterial>>| {
+            spawn_ship(world.commands(), &mut meshes, &mut materials, pos.0, vel.0, style);
+        });
+    });
+    world.flush();
+    // Restore the pilot's stats and nav mode onto the fresh hull.
+    let mut ships = world.query_filtered::<(&mut Ship, &mut crate::command::NavState), ()>();
+    if let Some((mut fresh, mut fresh_nav)) = ships.iter_mut(world).next() {
+        *fresh = ship;
+        *fresh_nav = nav;
+    }
 }
 
 /// Point the hull along the velocity vector (the cone's +Y is forward).

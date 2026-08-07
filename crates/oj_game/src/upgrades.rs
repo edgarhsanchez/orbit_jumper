@@ -25,13 +25,17 @@ impl ShipUpgrades {
         self.tiers.get(&slot).copied().unwrap_or(0)
     }
 
-    /// Salvage cost of the NEXT tier of a slot, if one exists.
+    /// Salvage cost of the NEXT tier of a slot. Tiers within the recipe
+    /// book use its unit counts; beyond it the cost curve continues
+    /// procedurally — leveling never caps.
     pub fn next_cost(&self, slot: UpgradeSlot) -> Option<u64> {
-        let next = self.tier(slot) + 1;
-        self.book
-            .iter()
-            .find(|r| r.slot == slot && r.tier == next)
-            .map(|r| r.units as u64 * 10)
+        let next = self.tier(slot).checked_add(1)?;
+        if let Some(r) = self.book.iter().find(|r| r.slot == slot && r.tier == next) {
+            return Some(r.units as u64 * 10);
+        }
+        // Beyond the book: exponential climb from the book's ceiling.
+        let over = next.saturating_sub(8) as f64;
+        Some((400.0 * 1.35f64.powf(over)) as u64)
     }
 
     /// Apply installed tiers to the ship's stats. Idempotent: recomputes
@@ -138,6 +142,35 @@ pub fn row(upgrades: &ShipUpgrades, label: &str, slot: UpgradeSlot) -> String {
 fn apply_to_new_ships(upgrades: Res<ShipUpgrades>, mut ships: Query<&mut Ship, Added<Ship>>) {
     for mut ship in &mut ships {
         upgrades.apply(&mut ship);
+    }
+}
+
+/// Pilot level: an infinite, sublinear curve over lifetime + current
+/// score. Every point ever earned counts toward it.
+pub fn pilot_level(lifetime_score: u64) -> u32 {
+    ((lifetime_score as f64 / 2000.0).sqrt() as u32) + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leveling_is_infinite() {
+        let mut upgrades = ShipUpgrades { tiers: HashMap::default(), book: Recipe::book() };
+        // March a slot far past the recipe book: a next cost must always
+        // exist and never decrease.
+        let mut last = 0u64;
+        for tier in 0..200u8 {
+            upgrades.tiers.insert(UpgradeSlot::Shield, tier);
+            let cost = upgrades.next_cost(UpgradeSlot::Shield).expect("cost at every tier");
+            assert!(cost >= last, "cost regressed at tier {tier}: {cost} < {last}");
+            last = cost;
+        }
+        // The level curve is monotone and unbounded in practice.
+        assert!(pilot_level(0) == 1);
+        assert!(pilot_level(2_000_000) > pilot_level(20_000));
+        assert!(pilot_level(2_000_000_000) > pilot_level(2_000_000));
     }
 }
 
