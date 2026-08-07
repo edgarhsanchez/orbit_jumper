@@ -30,6 +30,10 @@ pub struct Hull {
     pub hp: f64,
 }
 
+/// Salvage value a destroyed hull scatters; defaults to drone scrap.
+#[derive(Component)]
+pub struct Bounty(pub u64);
+
 /// A practice drone on rails.
 #[derive(Component)]
 pub struct TargetDrone;
@@ -145,7 +149,7 @@ fn fire_weapons(
     upgrades: Res<ShipUpgrades>,
     mut run: ResMut<RunScore>,
     mut ships: Query<(&mut Ship, &SimPos, &SimVel)>,
-    mut drones: Query<(Entity, &SimPos, &mut Hull), With<TargetDrone>>,
+    mut drones: Query<(Entity, &SimPos, &mut Hull)>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -234,10 +238,10 @@ fn fire_weapons(
 
 /// Missiles integrate like ships: celestial gravity plus seek thrust.
 fn fly_missiles(
-    celestials: Query<(&CelestialBody, &SimPos), (Without<Missile>, Without<TargetDrone>)>,
-    targets: Query<(&SimPos, &BodyVel), (With<TargetDrone>, Without<Missile>)>,
-    mut missiles: Query<(Entity, &mut Missile, &mut SimPos, &mut SimVel), Without<TargetDrone>>,
-    mut drones: Query<(Entity, &SimPos, &mut Hull), (With<TargetDrone>, Without<Missile>)>,
+    celestials: Query<(&CelestialBody, &SimPos), (Without<Missile>, Without<Hull>)>,
+    targets: Query<(&SimPos, &BodyVel), (With<Hull>, Without<Missile>)>,
+    mut missiles: Query<(Entity, &mut Missile, &mut SimPos, &mut SimVel), Without<Hull>>,
+    mut drones: Query<(Entity, &SimPos, &mut Hull), Without<Missile>>,
     mut commands: Commands,
 ) {
     let dt = DT * TIME_WARP;
@@ -323,13 +327,13 @@ fn apply_wells(
 
 /// Zero-HP hulls become salvage.
 fn reap_hulls(
-    hulls: Query<(Entity, &Hull, &SimPos)>,
+    hulls: Query<(Entity, &Hull, &SimPos, Option<&Bounty>)>,
     mut run: ResMut<RunScore>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (entity, hull, pos) in &hulls {
+    for (entity, hull, pos, bounty) in &hulls {
         if hull.hp > 0.0 {
             continue;
         }
@@ -340,15 +344,18 @@ fn reap_hulls(
             base_color: Color::srgb(0.55, 0.5, 0.45),
             ..default()
         });
+        // Bountied hulls (raiders) scrap into exotics; drones into basics.
+        let value = bounty.map_or(15, |b| b.0 / 2);
         for i in 0..2 {
             commands.spawn((
                 SystemScoped,
                 Wreck {
-                    value: 15,
-                    element: if i == 0 {
-                        oj_materials::Element::Silicon
-                    } else {
-                        oj_materials::Element::Iron
+                    value,
+                    element: match (bounty.is_some(), i) {
+                        (true, 0) => oj_materials::Element::Aetherite,
+                        (true, _) => oj_materials::Element::Titanium,
+                        (false, 0) => oj_materials::Element::Silicon,
+                        (false, _) => oj_materials::Element::Iron,
                     },
                 },
                 SimPos(pos.0 + Vec3d::new(1.0e8 * (i as f64 - 0.5), 5.0e7, 0.0)),

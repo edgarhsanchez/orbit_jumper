@@ -88,6 +88,7 @@ struct HudVm {
     map_status: String,
     level: String,
     style: String,
+    threat: String,
 }
 
 #[derive(Resource, Clone)]
@@ -260,6 +261,7 @@ const HUD_XAML: &str = r##"
   <Border Background="#F00D131C" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,8" Width="236" Margin="0,8,0,0">
     <StackPanel>
       <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10"/>
+      <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="10"/>
       <TextBlock Text="VELOCITY" Foreground="#5A6472" FontSize="10" Margin="0,6,0,0"/>
       <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="17" FontWeight="Bold"/>
       <Rectangle Width="214" Height="1" Fill="#22313C" Margin="0,7,0,7"/>
@@ -702,10 +704,14 @@ fn update_hud(
     stash: Res<Stash>,
     achieved: Res<crate::achievements::Unlocked>,
     flash: Res<crate::achievements::LastUnlock>,
-    game: Res<crate::GameUniverse>,
-    atlas: Res<crate::travel::SunAtlas>,
-    style_res: Res<crate::sim::ShipStyle>,
-    mut map_rows: ResMut<crate::travel::MapRows>,
+    // Grouped: bevy caps a system at 16 parameters.
+    (game, atlas, style_res, raider_q, mut map_rows): (
+        Res<crate::GameUniverse>,
+        Res<crate::travel::SunAtlas>,
+        Res<crate::sim::ShipStyle>,
+        Query<(), With<crate::aliens::AlienShip>>,
+        ResMut<crate::travel::MapRows>,
+    ),
 ) {
     let (Some(model), Ok((ship, vel, nav))) = (model, ships.single()) else {
         return;
@@ -751,6 +757,12 @@ fn update_hud(
     model.0.set_salvage(format!("{} CR", run.salvage_value));
 
     model.0.set_style(style_res.label());
+    let raiders = raider_q.iter().count();
+    model.0.set_threat(if raiders > 0 {
+        format!("!! {raiders} RAIDER{} IN-SYSTEM", if raiders == 1 { "" } else { "S" })
+    } else {
+        String::new()
+    });
     if let Ok(sun) = suns.single() {
         model.0.set_sun_class(if study.revealed {
             format!(
