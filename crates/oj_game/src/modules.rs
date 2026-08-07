@@ -107,6 +107,13 @@ pub struct CareerScore {
     pub total_score: u64,
     pub runs: u32,
     pub ships_lost: u32,
+    /// Unspent skill points, banked on level-up and spent on gear tiers.
+    /// `serde(default)` keeps pre-skill-point save files loading.
+    #[serde(default)]
+    pub skill_points: u32,
+    /// Highest pilot level already paid out, so a level pays exactly once.
+    #[serde(default)]
+    pub level_seen: u32,
 }
 
 fn career_path() -> std::path::PathBuf {

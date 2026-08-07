@@ -156,7 +156,9 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::stick::JoyInput>();
         app.init_resource::<crate::solar::SolarArm>();
+        app.init_resource::<crate::achievements::LastUnlock>();
         app.add_message::<bevy::input::mouse::MouseWheel>();
+        app.add_message::<crate::audio::Sfx>();
         app.add_plugins((
             crate::sim::SimPlugin,
             crate::modules::StudyPlugin,

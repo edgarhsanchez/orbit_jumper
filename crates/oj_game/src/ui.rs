@@ -1655,10 +1655,12 @@ fn update_hud(
     model.0.set_hull_text(format!("{:.0}/100", ship.hull));
     model.0.set_score(format!("{}", run.total()));
     model.0.set_best(format!("{}", career.best_run));
-    model.0.set_level(format!(
-        "LVL {}",
-        crate::upgrades::pilot_level(career.total_score + run.total())
-    ));
+    let level = crate::upgrades::pilot_level(career.total_score + run.total());
+    model.0.set_level(if career.skill_points > 0 {
+        format!("LVL {level} · {} SP", career.skill_points)
+    } else {
+        format!("LVL {level}")
+    });
     model.0.set_salvage(format!("{} CR", run.salvage_value));
 
     model.0.set_style(style_res.label());
@@ -1761,6 +1763,8 @@ fn update_hud(
             name: (*label).into(),
             tier: format!("TIER {}", ship_upgrades.tier(*slot)),
             cost: match ship_upgrades.next_cost(*slot) {
+                // A banked skill point trumps the salvage price.
+                Some(_) if career.skill_points > 0 => "1 SP".into(),
                 Some(c) => format!("{c} CR"),
                 None => "MAXED".into(),
             },

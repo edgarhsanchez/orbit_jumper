@@ -10,8 +10,11 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use oj_materials::{Recipe, UpgradeSlot};
 
-use crate::modules::RunScore;
+use crate::modules::{CareerScore, RunScore};
 use crate::sim::Ship;
+
+/// Skill points banked per pilot level gained.
+pub const POINTS_PER_LEVEL: u32 = 2;
 
 /// The vessel's installed tiers.
 #[derive(Resource, Default)]
@@ -66,17 +69,41 @@ impl Plugin for UpgradesPlugin {
             book: Recipe::book(),
         })
         .add_systems(Startup, dev_salvage)
-        .add_systems(Update, (buy_upgrades, apply_to_new_ships));
+        .add_systems(Update, (award_level_points, buy_upgrades, apply_to_new_ships));
     }
 }
 
-/// 1-4 buy the next tier: shields, command array, rocket drive, energy
-/// collector. Cost comes off the run's salvage value.
+/// Reaching a new pilot level banks skill points — the level-up IS the
+/// reward: points buy gear tiers outright, no salvage needed.
+fn award_level_points(
+    run: Res<RunScore>,
+    mut career: ResMut<CareerScore>,
+    mut flash: ResMut<crate::achievements::LastUnlock>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
+) {
+    let level = pilot_level(career.total_score + run.total());
+    let points = points_due(career.level_seen, level);
+    if points == 0 {
+        return;
+    }
+    career.skill_points += points;
+    career.level_seen = level;
+    career.save();
+    flash.text = format!("LEVEL {level} — +{points} SKILL POINTS · [TAB] SPEND");
+    flash.ttl = 6.0;
+    sfx.write(crate::audio::Sfx::OrbitLock);
+    info!("level up: {level}, +{points} skill points ({} banked)", career.skill_points);
+}
+
+/// Digits 1-8 buy the next tier of each slot. A banked skill point pays
+/// for any tier outright; otherwise the cost comes off run salvage.
 fn buy_upgrades(
     keys: Res<ButtonInput<KeyCode>>,
     mut upgrades: ResMut<ShipUpgrades>,
     mut run: ResMut<RunScore>,
+    mut career: ResMut<CareerScore>,
     mut ships: Query<&mut Ship>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     let picks = [
         (KeyCode::Digit1, UpgradeSlot::Shield),
@@ -89,8 +116,10 @@ fn buy_upgrades(
         (KeyCode::Digit8, UpgradeSlot::ForceFieldProjector),
     ];
     for (key, slot) in picks {
-        if keys.just_pressed(key) {
-            try_buy(&mut upgrades, &mut run, &mut ships, slot);
+        if keys.just_pressed(key)
+            && try_buy(&mut upgrades, &mut run, &mut career, &mut ships, slot)
+        {
+            sfx.write(crate::audio::Sfx::Salvage);
         }
     }
 }
@@ -98,19 +127,27 @@ fn buy_upgrades(
 fn try_buy(
     upgrades: &mut ShipUpgrades,
     run: &mut RunScore,
+    career: &mut CareerScore,
     ships: &mut Query<&mut Ship>,
     slot: UpgradeSlot,
-) {
-    let Some(cost) = upgrades.next_cost(slot) else { return };
-    if run.salvage_value < cost {
-        return;
+) -> bool {
+    let Some(cost) = upgrades.next_cost(slot) else { return false };
+    // Skill points first: they exist to be spent, and one point buys a
+    // tier no matter how deep the salvage curve has climbed.
+    if career.skill_points > 0 {
+        career.skill_points -= 1;
+        career.save();
+    } else if run.salvage_value >= cost {
+        run.salvage_value -= cost;
+    } else {
+        return false;
     }
-    run.salvage_value -= cost;
     let next = upgrades.tier(slot) + 1;
     upgrades.tiers.insert(slot, next);
     if let Ok(mut ship) = ships.single_mut() {
         upgrades.apply(&mut ship);
     }
+    true
 }
 
 /// Buy from an exclusive-world context — the entry point XAML button
@@ -118,17 +155,23 @@ fn try_buy(
 pub fn buy_from_world(world: &mut World, slot: UpgradeSlot) {
     world.resource_scope(|world, mut upgrades: Mut<ShipUpgrades>| {
         world.resource_scope(|world, mut run: Mut<RunScore>| {
-            let mut ships = world.query::<&mut Ship>();
-            let Some(cost) = upgrades.next_cost(slot) else { return };
-            if run.salvage_value < cost {
-                return;
-            }
-            run.salvage_value -= cost;
-            let next = upgrades.tier(slot) + 1;
-            upgrades.tiers.insert(slot, next);
-            if let Ok(mut ship) = ships.single_mut(world) {
-                upgrades.apply(&mut ship);
-            }
+            world.resource_scope(|world, mut career: Mut<CareerScore>| {
+                let mut ships = world.query::<&mut Ship>();
+                let Some(cost) = upgrades.next_cost(slot) else { return };
+                if career.skill_points > 0 {
+                    career.skill_points -= 1;
+                    career.save();
+                } else if run.salvage_value >= cost {
+                    run.salvage_value -= cost;
+                } else {
+                    return;
+                }
+                let next = upgrades.tier(slot) + 1;
+                upgrades.tiers.insert(slot, next);
+                if let Ok(mut ship) = ships.single_mut(world) {
+                    upgrades.apply(&mut ship);
+                }
+            });
         });
     });
 }
@@ -169,6 +212,14 @@ pub fn pilot_level(lifetime_score: u64) -> u32 {
     ((lifetime_score as f64 / 2000.0).sqrt() as u32) + 1
 }
 
+/// Skill points owed when the pilot stands at `level` with everything
+/// through `level_seen` already paid. Level 1 is the floor (nobody is
+/// paid for existing), and old saves carrying `level_seen` 0 back-pay
+/// the levels the veteran already earned.
+pub fn points_due(level_seen: u32, level: u32) -> u32 {
+    level.saturating_sub(level_seen.max(1)) * POINTS_PER_LEVEL
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +240,18 @@ mod tests {
         assert!(pilot_level(0) == 1);
         assert!(pilot_level(2_000_000) > pilot_level(20_000));
         assert!(pilot_level(2_000_000_000) > pilot_level(2_000_000));
+    }
+
+    /// Each level pays exactly once; fresh pilots get nothing for
+    /// existing; veteran saves are back-paid on first sight.
+    #[test]
+    fn skill_points_pay_per_level_once() {
+        assert_eq!(points_due(0, 1), 0, "level 1 is the starting state");
+        assert_eq!(points_due(1, 1), 0);
+        assert_eq!(points_due(1, 2), POINTS_PER_LEVEL);
+        assert_eq!(points_due(0, 4), 3 * POINTS_PER_LEVEL, "veteran back-pay");
+        assert_eq!(points_due(4, 4), 0, "no double pay");
+        assert_eq!(points_due(4, 6), 2 * POINTS_PER_LEVEL);
     }
 }
 
