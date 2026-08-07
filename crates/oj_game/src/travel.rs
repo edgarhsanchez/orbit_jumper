@@ -153,6 +153,7 @@ mod tests {
         app.init_asset::<Mesh>();
         app.init_asset::<StandardMaterial>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_message::<bevy::input::mouse::MouseWheel>();
         app.add_plugins((
             crate::sim::SimPlugin,
             crate::modules::StudyPlugin,

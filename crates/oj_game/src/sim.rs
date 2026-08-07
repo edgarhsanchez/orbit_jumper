@@ -32,7 +32,10 @@ impl Plugin for SimPlugin {
                 )
                     .chain(),
             )
-            .add_systems(Update, sync_render_transforms);
+            .add_systems(
+                Update,
+                (sync_render_transforms, orient_ship, flame_visibility, camera_zoom),
+            );
         #[cfg(debug_assertions)]
         app.add_systems(Update, debug_teleport);
     }
@@ -178,23 +181,7 @@ fn spawn_current_system(
         .map(|p| p.orbit.semi_major * 0.6)
         .unwrap_or(1.0e11);
     let v = circular_speed(mu, r);
-    commands.spawn((
-        Ship::default(),
-        crate::command::NavState::Free,
-        OriginAnchor,
-        SimPos(Vec3d::new(r, 0.0, 0.0)),
-        SimVel(Vec3d::new(0.0, v, 0.0)),
-        Mesh3d(meshes.add(Cone::new(6.0, 20.0).mesh().resolution(16))),
-        // Slight emissive: a bare-metal hull with no environment map
-        // renders black in space (verified by screenshot, 2026-08-06).
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.8, 0.85, 0.9),
-            metallic: 0.2,
-            emissive: LinearRgba::rgb(2.0, 2.6, 3.6),
-            ..default()
-        })),
-        Transform::default(),
-    ));
+    spawn_ship(commands.reborrow(), &mut meshes, &mut materials, Vec3d::new(r, 0.0, 0.0), Vec3d::new(0.0, v, 0.0));
 
     // Camera works in RENDER units (sim / 1e7): the ship rides at the
     // render origin; orbits live in the XY plane, so the view is
@@ -202,6 +189,9 @@ fn spawn_current_system(
     // system (~1e5 render units), nowhere near the 1000-unit default.
     commands.spawn((
         Camera3d::default(),
+        bevy::camera::Hdr,
+        // Emissives (sun, engine flames, missiles, stars) glow for free.
+        bevy::post_process::bloom::Bloom::NATURAL,
         Projection::Perspective(PerspectiveProjection {
             far: 5.0e6,
             ..default()
@@ -214,6 +204,41 @@ fn spawn_current_system(
         },
         Transform::from_xyz(0.0, 0.0, 600.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+
+    // Distant starfield: anchored to the ship's render frame (the ship is
+    // always at the origin/screen center, so the sky reads as infinitely
+    // far). Below the orbital plane, so everything draws over it.
+    let star_mesh = meshes.add(Sphere::new(1.6).mesh().ico(1).unwrap());
+    let star_mats = [
+        materials.add(StandardMaterial {
+            base_color: Color::linear_rgba(1.4, 1.4, 1.6, 1.0),
+            unlit: true,
+            ..default()
+        }),
+        materials.add(StandardMaterial {
+            base_color: Color::linear_rgba(0.9, 1.0, 1.5, 1.0),
+            unlit: true,
+            ..default()
+        }),
+        materials.add(StandardMaterial {
+            base_color: Color::linear_rgba(1.5, 1.1, 0.8, 1.0),
+            unlit: true,
+            ..default()
+        }),
+    ];
+    let mut sky_rng = oj_universe::SplitMix64(0x57A2F1E1D);
+    for _ in 0..520 {
+        let x = sky_rng.range(-4200.0, 4200.0) as f32;
+        let y = sky_rng.range(-4200.0, 4200.0) as f32;
+        let z = sky_rng.range(-2400.0, -1200.0) as f32;
+        let scale = sky_rng.range(0.5, 1.8) as f32;
+        let mat = star_mats[(sky_rng.next_u64() % 3) as usize].clone();
+        commands.spawn((
+            Mesh3d(star_mesh.clone()),
+            MeshMaterial3d(mat),
+            Transform::from_xyz(x, y, z).with_scale(Vec3::splat(scale)),
+        ));
+    }
     info!(
         "system {:?}: {:?} sun, {} planets",
         game.current,
@@ -286,12 +311,16 @@ pub fn spawn_bodies(
 
     // Planets on rails. Meshes are per-body at PHYSICAL radius (render
     // units): ride rings are geometry the pilot reasons about, so the
-    // sprite must not lie about where the surface is.
-    let planet_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.45, 0.5, 0.6),
-        perceptual_roughness: 0.9,
-        ..default()
-    });
+    // sprite must not lie about where the surface is. Palette varies per
+    // planet from the seed, so systems feel distinct.
+    const PLANET_PALETTE: [(f32, f32, f32); 6] = [
+        (0.45, 0.52, 0.62),
+        (0.62, 0.42, 0.32),
+        (0.66, 0.56, 0.36),
+        (0.5, 0.66, 0.72),
+        (0.5, 0.58, 0.42),
+        (0.56, 0.48, 0.66),
+    ];
     let moon_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.6, 0.58, 0.55),
         perceptual_roughness: 1.0,
@@ -331,7 +360,15 @@ pub fn spawn_bodies(
                 Mesh3d(meshes.add(
                     Sphere::new((planet_radius * RENDER_SCALE) as f32).mesh().ico(3).unwrap(),
                 )),
-                MeshMaterial3d(planet_mat.clone()),
+                MeshMaterial3d({
+                    let (pr, pg, pb) =
+                        PLANET_PALETTE[(system.id.index as usize + i) % PLANET_PALETTE.len()];
+                    materials.add(StandardMaterial {
+                        base_color: Color::srgb(pr, pg, pb),
+                        perceptual_roughness: 0.9,
+                        ..default()
+                    })
+                }),
                 Transform::default(),
             ))
             .id();
@@ -453,6 +490,120 @@ fn ring_hover_off(
 ) {
     if let Ok(mut m) = rings.get_mut(out.entity) {
         m.0 = mats.dim.clone();
+    }
+}
+
+/// The engine exhaust cone; visible while burning.
+#[derive(Component)]
+pub struct EngineFlame;
+
+/// Spawn the player's vessel: hull cone, swept wings, engine nozzle and
+/// a bloom-lit exhaust flame (hidden until burning). The assembly is
+/// render-space children of the hull, so orientation carries everything.
+pub fn spawn_ship(
+    mut commands: Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3d,
+    vel: Vec3d,
+) {
+    let hull_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.75, 0.82, 0.9),
+        metallic: 0.3,
+        perceptual_roughness: 0.4,
+        emissive: LinearRgba::rgb(0.35, 0.5, 0.7),
+        ..default()
+    });
+    let wing_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.25, 0.75, 0.85),
+        metallic: 0.4,
+        emissive: LinearRgba::rgb(0.05, 0.5, 0.6),
+        ..default()
+    });
+    let flame_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.6, 0.15),
+        emissive: LinearRgba::rgb(14.0, 5.0, 0.8),
+        unlit: true,
+        ..default()
+    });
+    commands
+        .spawn((
+            Ship::default(),
+            crate::command::NavState::Free,
+            OriginAnchor,
+            SimPos(pos),
+            SimVel(vel),
+            Mesh3d(meshes.add(Cone::new(5.0, 18.0).mesh().resolution(16))),
+            MeshMaterial3d(hull_mat.clone()),
+            Transform::default(),
+        ))
+        .with_children(|ship| {
+            // Swept wings.
+            ship.spawn((
+                Mesh3d(meshes.add(Cuboid::new(16.0, 5.0, 1.6).mesh())),
+                MeshMaterial3d(wing_mat.clone()),
+                Transform::from_xyz(0.0, -6.0, 0.0),
+            ));
+            // Engine nozzle block.
+            ship.spawn((
+                Mesh3d(meshes.add(Cuboid::new(6.0, 4.0, 3.0).mesh())),
+                MeshMaterial3d(wing_mat),
+                Transform::from_xyz(0.0, -10.0, 0.0),
+            ));
+            // Exhaust flame, pointing aft; bloom does the glow.
+            ship.spawn((
+                EngineFlame,
+                Mesh3d(meshes.add(Cone::new(3.2, 12.0).mesh().resolution(10))),
+                MeshMaterial3d(flame_mat),
+                Transform::from_xyz(0.0, -17.0, 0.0)
+                    .with_rotation(Quat::from_rotation_z(std::f32::consts::PI)),
+                Visibility::Hidden,
+            ));
+        });
+}
+
+/// Point the hull along the velocity vector (the cone's +Y is forward).
+fn orient_ship(mut ships: Query<(&SimVel, &mut Transform), With<Ship>>) {
+    for (vel, mut transform) in &mut ships {
+        if vel.0.length() > 1.0 {
+            let angle = (vel.0.y).atan2(vel.0.x) as f32 - std::f32::consts::FRAC_PI_2;
+            transform.rotation = Quat::from_rotation_z(angle);
+        }
+    }
+}
+
+/// Show the exhaust while burning: manual thrust or a guided transfer.
+fn flame_visibility(
+    keys: Res<ButtonInput<KeyCode>>,
+    ships: Query<(&Ship, &crate::command::NavState)>,
+    mut flames: Query<&mut Visibility, With<EngineFlame>>,
+) {
+    let Ok((ship, nav)) = ships.single() else { return };
+    let thrusting = keys.any_pressed([
+        KeyCode::ArrowUp,
+        KeyCode::ArrowDown,
+        KeyCode::ArrowLeft,
+        KeyCode::ArrowRight,
+    ]);
+    let burning = ship.energy > 0.0
+        && (thrusting || matches!(nav, crate::command::NavState::Transfer { .. }));
+    for mut vis in &mut flames {
+        *vis = if burning { Visibility::Inherited } else { Visibility::Hidden };
+    }
+}
+
+/// Mouse-wheel camera zoom, clamped so the HUD scale stays sane.
+fn camera_zoom(
+    mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
+    mut cameras: Query<&mut Transform, With<Camera3d>>,
+) {
+    let scroll: f32 = wheel.read().map(|w| w.y).sum();
+    if scroll == 0.0 {
+        return;
+    }
+    for mut transform in &mut cameras {
+        let z = (transform.translation.z * (1.0 - scroll * 0.12)).clamp(160.0, 4000.0);
+        transform.translation.z = z;
     }
 }
 

@@ -9,8 +9,8 @@ use oj_materials::Element;
 use oj_orbits::Vec3d;
 use oj_universe::SunClass;
 
-use crate::sim::{DT, OriginAnchor, Ship, SimClock, SunBody, SystemScoped, TIME_WARP};
-use crate::{GameUniverse, SimPos, SimVel};
+use crate::sim::{DT, Ship, SimClock, SunBody, SystemScoped, TIME_WARP};
+use crate::{GameUniverse, SimPos};
 
 // ---------------------------------------------------------------------------
 // Study
@@ -279,20 +279,13 @@ fn respawn(
         .unwrap_or(1.0e11);
     let v = oj_orbits::circular_speed(mu, r);
     study.progress = 0.0; // knowledge of the sun survives; progress does not
-    commands.spawn((
-        Ship::default(),
-        crate::command::NavState::Free,
-        OriginAnchor,
-        SimPos(Vec3d::new(r, 0.0, 0.0)),
-        SimVel(Vec3d::new(0.0, v, 0.0)),
-        Mesh3d(meshes.add(Cone::new(6.0, 20.0).mesh().resolution(16))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.8, 0.85, 0.9),
-            metallic: 0.8,
-            ..default()
-        })),
-        Transform::default(),
-    ));
+    crate::sim::spawn_ship(
+        commands,
+        &mut meshes,
+        &mut materials,
+        Vec3d::new(r, 0.0, 0.0),
+        Vec3d::new(0.0, v, 0.0),
+    );
 }
 
 /// Which sun class the HUD should display, honoring the study state.
