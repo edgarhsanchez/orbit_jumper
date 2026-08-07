@@ -631,6 +631,7 @@ pub fn spawn_ship(
 
 /// Rebuild the ship's visuals in the current style, preserving flight
 /// state and stats — the yard repaints, it does not recommission.
+#[allow(clippy::type_complexity)]
 pub fn restyle_ship(world: &mut World) {
     let mut ships = world.query_filtered::<(Entity, &Ship, &SimPos, &crate::SimVel, &crate::command::NavState), ()>();
     let Some((entity, ship, pos, vel, nav)) = ships.iter(world).next().map(|(e, s, p, v, n)| {

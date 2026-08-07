@@ -258,13 +258,14 @@ fn collect_wrecks(
 
 /// A destroyed vessel is forever lost — but the pilot flies again: a fresh
 /// tier-1 ship spawns at the starting orbit with a zeroed run score.
+#[allow(clippy::too_many_arguments)]
 fn respawn(
     ships: Query<(), With<Ship>>,
     game: Res<GameUniverse>,
     style: Res<crate::sim::ShipStyle>,
     mut study: ResMut<StudyState>,
     _clock: Res<SimClock>,
-    mut commands: Commands,
+    commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
