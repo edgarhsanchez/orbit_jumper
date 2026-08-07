@@ -38,7 +38,7 @@ the size of the void.
 | <img src="docs/media/living-sun.png" alt="The living sun: shader-driven plasma with storm cells and a breathing corona, ringed by ride orbits" width="440"> | **The living sun.** Every star is a WGSL shader, not a sprite: fractal plasma churns across the photosphere, seeded storm cells wander the surface and twist it into spiral arms with hot bright eyes, a flame shell licks the silhouette, and a corona breathes over it all. The palette rides each sun's spectral class — M-dwarfs smolder red, G suns burn gold, O giants blaze blue-white — and every system's seed churns differently. All of it animates on the GPU at zero per-frame CPU cost. |
 | <img src="docs/media/comet-tail.png" alt="A comet nucleus streaming its anti-sunward mote tail, the player ship alongside" width="440"> | **Comets.** Each system seeds sun-grazers on fierce ellipses. Near perihelion they outgas hard — a glowing mote tail that points away from the sun, as real tails do — and they drop chunks of collectible ice along their path. Fly through one and it hurts: the shield absorbs first (the reactor pays for the field), the rest burns to the hull, and the impact shoves you off your line. |
 | <img src="docs/media/solar-arm.png" alt="The solar arm deployed: telescoping boom aimed at the sun with the octagonal collector lit" width="440"> | **The solar arm.** Free flight has no ambient refueling — energy comes from riding an orbit, or from the deliberate, vulnerable act of deploying the arm (`P`): a telescoping boom aims at the nearest sun, the octagonal collector lights on its sun side, and the tank fills fast — but **weapons stay offline until it stows**. At full charge it stows itself. Better suns pour faster; they also burn hotter. |
-| <img src="docs/media/level-up.png" alt="HUD flash on level-up: LEVEL 4 — +2 SKILL POINTS, with the pilot line showing banked SP" width="440"> | **Level up, spend points.** Score is bounty-weighted combat, so pilot level is paced by what you can defeat — and every new level banks **2 skill points**, announced with a HUD flash and a chime. A point buys the next tier of any gear slot outright, no salvage needed, from the vessel panel or the digit keys; salvage stays the grind currency between levels. Kills pay twice: bounty score, plus wreckage that **streams to the nearest ship on its own** — the salvage magnet spares you the sweep-up lap. |
+| <img src="docs/media/level-up.png" alt="HUD flash on level-up: LEVEL 4 — +2 SKILL POINTS, with the pilot line showing banked SP" width="440"> | **Level up, craft gear.** Score is bounty-weighted combat, so pilot level is paced by what you can defeat — and every new level banks **2 skill points**. Crafting the next tier of any gear slot costs that slot's **material recipe plus one point**: shields want titanium and ice, drives iron and carbon, graviton tech the uranium and aetherite that only radioactive worlds and raider wrecks supply. The vessel panel shows every recipe, your stash counts per element, and lights up what you can afford. Wreckage **streams to the nearest ship on its own** — the salvage magnet feeds the forge. |
 
 ## The sound of the void
 
@@ -79,7 +79,7 @@ rotation.
 | Cockpit ⇄ tactical | `F` | **VIEW** |
 | Laser / missile¹ | `Z` / `X` | **LAS / MSL** |
 | Gravity wells¹ | `C` / `V` | **PULL / PUSH** |
-| Buy gear tiers | `1`–`8` | vessel panel buttons |
+| Craft gear tiers | `1`–`8` | vessel panel CRAFT buttons |
 | Vessel / map / study | `Tab` / `M` / `S` | topbar buttons |
 | Zoom | mouse wheel or hold `-` / `=` | — |
 

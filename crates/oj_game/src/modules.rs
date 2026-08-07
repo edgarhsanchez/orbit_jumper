@@ -307,19 +307,27 @@ const COLLECT_RADIUS: f64 = 5.0e8;
 fn collect_wrecks(
     wrecks: Query<(Entity, &Wreck, &SimPos), Without<Ship>>,
     ships: Query<&SimPos, With<Ship>>,
+    upgrades: Res<crate::upgrades::ShipUpgrades>,
     mut run: ResMut<RunScore>,
     mut stash: ResMut<Stash>,
     mut commands: Commands,
     mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     let Ok(ship_pos) = ships.single() else { return };
+    let mut collected = false;
     for (entity, wreck, pos) in &wrecks {
         if pos.0.distance(ship_pos.0) < COLLECT_RADIUS {
             run.salvage_value += wreck.value;
             *stash.0.entry(wreck.element).or_default() += 1;
             sfx.write(crate::audio::Sfx::Salvage);
             commands.entity(entity).despawn();
+            collected = true;
         }
+    }
+    // Materials are craft currency now; what you hauled in survives the
+    // session.
+    if collected {
+        crate::upgrades::save_loadout(&upgrades, &stash);
     }
 }
 

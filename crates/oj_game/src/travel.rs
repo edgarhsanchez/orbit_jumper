@@ -151,6 +151,14 @@ mod tests {
     fn headless_app() -> App {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
+        // Deterministic time: real wall-clock deltas let a 1/64 s fixed
+        // tick sneak between updates on a loaded machine, integrating
+        // the freshly-reset ship off its start orbit before the assert
+        // (reproduced under CPU contention). 1 ms per update means the
+        // fixed accumulator never fires during a two-update test.
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(1),
+        ));
         app.init_asset::<Mesh>();
         app.init_asset::<StandardMaterial>();
         app.init_resource::<ButtonInput<KeyCode>>();

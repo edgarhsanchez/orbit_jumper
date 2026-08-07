@@ -29,3 +29,4 @@ orbit_jumper_style.ron
 # wasm build outputs (CI rebuilds them; dist is generated)
 target-wasm
 web/dist
+orbit_jumper_loadout.ron

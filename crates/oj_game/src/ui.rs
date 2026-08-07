@@ -35,7 +35,11 @@ struct MedalVm {
 struct UpgradeRowVm {
     name: String,
     tier: String,
+    /// "4 TI · 2 ICE · 1 SP" — this row's own recipe, never a shared
+    /// currency banner (a shared one made every row repaint at once).
     cost: String,
+    /// Cost text color: lit when affordable, dim when not.
+    cost_color: String,
     color: String,
     /// Slot index, passed back as the craft command's parameter.
     param: String,
@@ -96,6 +100,7 @@ struct HudVm {
     map: Vec<MapRowVm>,
     map_status: String,
     level: String,
+    sp_line: String,
     style: String,
     threat: String,
     heading: String,
@@ -355,16 +360,18 @@ const PANEL_XAML: &str = r##"
       </Rectangle.Triggers>
     </Rectangle>
 
+    <TextBlock Text="{Binding sp_line}" Foreground="#00E5FF" FontSize="11" Margin="0,0,0,4"/>
+
     <ItemsControl ItemsSource="{Binding rows}">
       <ItemsControl.ItemTemplate>
         <DataTemplate>
           <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
             <Rectangle Width="9" Height="9" Fill="{Binding color}" Margin="0,4,0,0"/>
-            <StackPanel Width="150" Margin="9,0,0,0">
+            <StackPanel Width="128" Margin="9,0,0,0">
               <TextBlock Text="{Binding name}" Foreground="#E0E2EB" FontSize="11"/>
               <TextBlock Text="{Binding tier}" Foreground="#5A6472" FontSize="10"/>
             </StackPanel>
-            <TextBlock Text="{Binding cost}" Foreground="#FFB454" FontSize="10" Width="72" Margin="0,4,0,0"/>
+            <TextBlock Text="{Binding cost}" Foreground="{Binding cost_color}" FontSize="10" Width="94" Margin="0,4,0,0"/>
             <Button Content="CRAFT" Command="{Binding craft}" CommandParameter="{Binding param}"
                     Background="#0B1B22" BorderBrush="#00E5FF" Foreground="#00E5FF"
                     FontSize="10" Padding="7,2"/>
@@ -1755,21 +1762,34 @@ fn update_hud(
         });
     }
 
-    // Vessel panel rows.
+    // Vessel panel rows: each row carries ITS OWN recipe — materials
+    // from the stash plus one skill point — and lights up only when both
+    // are in hand. No shared currency banner: crafting one row changes
+    // that row and the stash chips, nothing else.
+    model.0.set_sp_line(format!(
+        "SKILL POINTS: {}   ·   MATERIALS FUEL THE FORGE",
+        career.skill_points
+    ));
     let rows: Vec<UpgradeRowVm> = CRAFT_SLOTS
         .iter()
         .enumerate()
-        .map(|(i, (slot, label, color))| UpgradeRowVm {
-            name: (*label).into(),
-            tier: format!("TIER {}", ship_upgrades.tier(*slot)),
-            cost: match ship_upgrades.next_cost(*slot) {
-                // A banked skill point trumps the salvage price.
-                Some(_) if career.skill_points > 0 => "1 SP".into(),
-                Some(c) => format!("{c} CR"),
-                None => "MAXED".into(),
-            },
-            color: (*color).into(),
-            param: i.to_string(),
+        .map(|(i, (slot, label, color))| {
+            let next = ship_upgrades.tier(*slot).saturating_add(1);
+            let cost = crate::upgrades::material_cost(*slot, next)
+                .iter()
+                .map(|(e, n)| format!("{n} {}", element_display(*e).0))
+                .collect::<Vec<_>>()
+                .join(" · ")
+                + &format!(" · {} SP", crate::upgrades::CRAFT_POINT_COST);
+            let affordable = crate::upgrades::can_afford(*slot, next, &stash, &career);
+            UpgradeRowVm {
+                name: (*label).into(),
+                tier: format!("TIER {}", ship_upgrades.tier(*slot)),
+                cost,
+                cost_color: if affordable { "#7CFFB0" } else { "#5A6472" }.into(),
+                color: (*color).into(),
+                param: i.to_string(),
+            }
         })
         .collect();
     model.0.set_rows(rows);
