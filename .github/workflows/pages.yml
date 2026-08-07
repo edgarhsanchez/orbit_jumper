@@ -1,4 +1,10 @@
-name: Deploy playable build to GitHub Pages
+name: Refresh playable build in docs/ (GitHub Pages)
+
+# Pages is configured as "deploy from branch: main /docs" (set in repo
+# settings — the API route needs permissions the workflow token lacks).
+# So publishing = committing the built bundle into docs/; GitHub's own
+# pages-build-deployment picks it up. docs/ is deliberately NOT in the
+# paths filter below, so the bot's own commit never retriggers this.
 
 on:
   push:
@@ -12,9 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -64,21 +68,21 @@ jobs:
         run: |
           node -e "const fs=require('fs'); if(!WebAssembly.validate(fs.readFileSync('web/dist/oj_game_bg.wasm'))) { console.error('INVALID wasm'); process.exit(1); } console.log('wasm valid');"
 
-      - name: Configure Pages (auto-enable on first run)
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: web/dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Commit refreshed bundle to docs/
+        run: |
+          rm -rf docs
+          mkdir docs
+          cp web/dist/index.html web/dist/oj_game.js web/dist/oj_game_bg.wasm docs/
+          touch docs/.nojekyll
+          git add docs
+          if git diff --cached --quiet; then
+            echo "docs/ unchanged — nothing to publish"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: refresh playable build from ${GITHUB_SHA::9}"
+          # Rebase in case main moved during the build; docs-only commits
+          # rebase cleanly over anything.
+          git pull --rebase origin main
+          git push origin main
