@@ -113,7 +113,7 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiLayoutState>()
             .add_systems(Startup, init_model)
-            .add_systems(Update, (update_hud, toggle_panel, log_commands))
+            .add_systems(Update, (update_hud, toggle_panel, log_commands, exit_orbit_visibility))
             .add_systems(Update, relayout_ui)
             // The touch-key bridge must run AFTER bevy's per-frame input
             // clear and AFTER UI focus computes Interaction, or the
@@ -920,6 +920,59 @@ const WPN_WELL_ROW: &str = r##"
     </Button>
 "##;
 
+// Shown only while riding an orbit: the sticky orbit's one-tap release.
+const EXIT_ORBIT_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="@XM">
+  <StackPanel.Resources>
+    <Style x:Key="con-exit" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="96" Height="44">
+              <Path x:Name="frame" Width="96" Height="44" Stretch="Fill"
+                    Fill="#D8120A08" Stroke="#FFB454" StrokeThickness="1"
+                    Data="M 10,0 L 86,0 L 96,10 L 96,34 L 86,44 L 10,44 L 0,34 L 0,10 Z"/>
+              <Rectangle Width="30" Height="2" Fill="#FFB454"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#FFB454"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#59FFB454"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C8FFB454"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </StackPanel.Resources>
+  <Button x:Name="btn_exit_orbit" Style="{StaticResource con-exit}">
+    <StackPanel>
+      <TextBlock Text="EXIT ORBIT" Foreground="#FFE8C8" FontSize="12" HorizontalAlignment="Center"/>
+      <TextBlock Text="O" Foreground="#6A5A3E" FontSize="8" HorizontalAlignment="Center"/>
+    </StackPanel>
+  </Button>
+</StackPanel>
+"##;
+
 /// Armament fingerprint: which weapon systems are installed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Armament {
@@ -985,7 +1038,8 @@ impl Armament {
 }
 
 /// btn_* name -> virtual key, for wiring TouchKey after instantiation.
-const TOUCH_KEYS: [(&str, KeyCode); 10] = [
+const TOUCH_KEYS: [(&str, KeyCode); 11] = [
+    ("btn_exit_orbit", KeyCode::KeyO),
     ("btn_view", KeyCode::KeyF),
     ("btn_climb", KeyCode::KeyE),
     ("btn_dive", KeyCode::KeyQ),
@@ -1005,6 +1059,28 @@ struct VesselPanel(Entity);
 /// Root entity of the galaxy map, for the M toggle.
 #[derive(Resource)]
 struct MapPanel(Entity);
+
+/// Root entity of the EXIT ORBIT button; shown only while riding.
+#[derive(Resource)]
+struct ExitOrbitPanel(Entity);
+
+fn exit_orbit_visibility(
+    panel: Option<Res<ExitOrbitPanel>>,
+    ships: Query<&NavState, With<crate::sim::Ship>>,
+    mut vis: Query<&mut Visibility>,
+) {
+    let (Some(panel), Ok(nav)) = (panel, ships.single()) else { return };
+    if let Ok(mut v) = vis.get_mut(panel.0) {
+        let want = if matches!(nav, NavState::Orbiting { .. }) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+}
 
 /// Craftable slots, in vessel-panel row order; the craft command's
 /// parameter indexes this.
@@ -1079,6 +1155,7 @@ struct Metrics {
     tape_margin: String,
     threat_margin: String,
     console_margin: String,
+    exit_margin: String,
 }
 
 impl Metrics {
@@ -1100,6 +1177,7 @@ impl Metrics {
                 tape_margin: "0,10,0,0".into(),
                 threat_margin: "0,10,12,0".into(),
                 console_margin: "0,0,0,8".into(),
+                exit_margin: "0,0,0,84".into(),
             },
             // Landscape phone: desktop arrangement (it fits), plus touch
             // controls in the corners.
@@ -1131,6 +1209,7 @@ impl Metrics {
                     tape_margin: "0,110,8,0".into(),
                     threat_margin: "0,80,8,0".into(),
                     console_margin: "0,0,0,178".into(),
+                    exit_margin: "0,0,0,252".into(),
                 }
             }
         }
@@ -1155,6 +1234,7 @@ impl Metrics {
             .replace("@TPM", &self.tape_margin)
             .replace("@HM", &self.threat_margin)
             .replace("@KM", &self.console_margin)
+            .replace("@XM", &self.exit_margin)
     }
 }
 
@@ -1193,6 +1273,7 @@ fn relayout_ui(world: &mut World) {
         Vessel,
         Map,
         Controls,
+        ExitOrbit,
     }
     // The audit that decides what lives where: tactical carries the
     // management surface (sensors, meta, yard, map); the cockpit carries
@@ -1223,6 +1304,7 @@ fn relayout_ui(world: &mut World) {
             (m.fill(MAP_XAML), Doc::Map),
         ]
     };
+    docs.push((m.fill(EXIT_ORBIT_XAML), Doc::ExitOrbit));
     if m.touch_controls {
         let topbar = if cockpit { TOUCH_TOPBAR_COCKPIT_XAML } else { TOUCH_TOPBAR_XAML };
         docs.push((m.fill(topbar), Doc::Controls));
@@ -1263,6 +1345,24 @@ fn relayout_ui(world: &mut World) {
                     .entity_mut(root)
                     .insert((Visibility::Hidden, GlobalZIndex(20)));
                 world.insert_resource(MapPanel(root));
+            }
+            Doc::ExitOrbit => {
+                // Same key wiring as the clusters, but the button only
+                // exists on screen while an orbit is being ridden.
+                let buttons: Vec<(Entity, KeyCode)> = world
+                    .get::<XamlNames>(root)
+                    .map(|names| {
+                        TOUCH_KEYS
+                            .iter()
+                            .filter_map(|(n, k)| names.get(n).map(|e| (e, *k)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (button, key) in buttons {
+                    world.entity_mut(button).insert(TouchKey(key));
+                }
+                world.entity_mut(root).insert(Visibility::Hidden);
+                world.insert_resource(ExitOrbitPanel(root));
             }
             Doc::Controls => {
                 // Wire each named button to its virtual key.
@@ -1335,7 +1435,12 @@ fn update_hud(
         match *nav {
             NavState::Free => ">> FREE FLIGHT — CLICK+HOLD A BODY".into(),
             NavState::Transfer { target, .. } => format!(">> TRANSFER: {}", name(target)),
-            NavState::Orbiting { body, .. } => format!(">> ORBIT LOCK: {}", name(body)),
+            NavState::Orbiting { body, speed, .. } => format!(
+                ">> ORBIT LOCK: {} · RIDE {:+.1}x {} · [O] EXIT",
+                name(body),
+                speed.abs(),
+                if speed >= 0.0 { "CCW" } else { "CW" }
+            ),
         }
     };
     model.0.set_nav(if flash.ttl > 0.0 {

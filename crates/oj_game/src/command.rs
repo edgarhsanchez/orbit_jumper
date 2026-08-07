@@ -28,9 +28,20 @@ pub enum NavState {
     /// Guided burn toward a circular orbit of `target` at `ride_r`.
     Transfer { target: Entity, ride_r: f64 },
     /// Captured; light station-keeping holds the orbit while the body
-    /// carries the ship around the system — the hitched ride.
-    Orbiting { body: Entity, ride_r: f64 },
+    /// carries the ship around the system — the hitched ride. The orbit
+    /// is STICKY: it ends only by commanding another ride or [O] EXIT.
+    /// `speed` is a signed multiple of circular velocity — positive is
+    /// counterclockwise, negative clockwise; the only thing the stick
+    /// and arrows steer while riding.
+    Orbiting { body: Entity, ride_r: f64, speed: f64 },
 }
+
+/// Highest ride-speed multiple the station-keeper will hold.
+const ORBIT_SPEED_MAX: f64 = 3.0;
+/// Ride-speed change per real second at full stick.
+const ORBIT_SPEED_RATE: f64 = 0.9;
+/// Riding an orbit recharges the tank, real seconds.
+const ORBIT_ENERGY_REGEN: f64 = 1.5;
 
 /// The in-progress click-and-hold, if any.
 #[derive(Resource, Default)]
@@ -136,8 +147,7 @@ fn guide_nav(
     mut ships: Query<(&mut Ship, &SimPos, &mut SimVel, &mut NavState)>,
 ) {
     let Ok((mut ship, pos, mut vel, mut nav)) = ships.single_mut() else { return };
-    // Manual thrust overrides guidance — the pilot is always in charge.
-    if joy.active
+    let manual = joy.active
         || keys.any_pressed([
             KeyCode::ArrowUp,
             KeyCode::ArrowDown,
@@ -145,15 +155,22 @@ fn guide_nav(
             KeyCode::ArrowRight,
             KeyCode::KeyE,
             KeyCode::KeyQ,
-        ])
-    {
+        ]);
+    // Manual thrust cancels a TRANSFER — the pilot is always in charge
+    // of a burn. An ORBIT is sticky: the same inputs steer the ride
+    // instead, and only [O] (or commanding another orbit) releases it.
+    if manual && matches!(*nav, NavState::Transfer { .. }) {
         *nav = NavState::Free;
         return;
     }
-    let (target, ride_r, station_keeping) = match *nav {
+    if keys.just_pressed(KeyCode::KeyO) && matches!(*nav, NavState::Orbiting { .. }) {
+        *nav = NavState::Free;
+        return;
+    }
+    let (target, ride_r, orbit_speed) = match *nav {
         NavState::Free => return,
-        NavState::Transfer { target, ride_r } => (target, ride_r, false),
-        NavState::Orbiting { body, ride_r } => (body, ride_r, true),
+        NavState::Transfer { target, ride_r } => (target, ride_r, None),
+        NavState::Orbiting { body, ride_r, speed } => (body, ride_r, Some(speed)),
     };
     let Ok((body, body_pos, body_vel)) = bodies.get(target) else {
         *nav = NavState::Free;
@@ -169,46 +186,79 @@ fn guide_nav(
     let r_target = ride_r.max(body.radius * 1.2).min(body.soi * 0.9);
     let v_circ = (body.mu / r).sqrt();
     let r_hat = rel_pos.normalized();
-    // In-plane tangent; degenerate (radial) approaches pick any normal.
-    let h = rel_pos.cross(rel_vel);
-    let t_hat = if h.length() > 1e-6 {
-        h.cross(rel_pos).normalized() * -1.0
-    } else {
-        Vec3d::new(-r_hat.y, r_hat.x, 0.0).normalized()
-    };
-    // Bigger bodies mean faster rides for free (v = sqrt(mu/r)); the
-    // gravity drive multiplies further. Overspeeding a circular orbit
-    // needs continuous inward correction, so the energy price below is
-    // the real centripetal deficit, not a fee schedule.
-    let v_ride = v_circ * if station_keeping { ship.orbit_boost } else { 1.0 };
+    // Deterministic in-plane CCW tangent: the SIGN of the ride speed
+    // picks the direction, so reversing through zero flips cleanly.
+    let t_ccw = Vec3d::new(-r_hat.y, r_hat.x, 0.0).normalized();
     // Approach rate: close the radial gap in ~this much SIM time whatever
     // the scale — a leap between rings must feel like seconds, not
     // orbital-mechanics hours (measured: a v_circ-capped descent took
     // minutes of real time). The gap shrinking slows the approach
     // naturally, so arrival is smooth; burns still price energy.
     const TRANSFER_CLOSE_SIM_S: f64 = 6000.0;
-    let v_des = t_hat * v_ride + r_hat * ((r_target - r) / TRANSFER_CLOSE_SIM_S);
 
+    let v_des = if let Some(speed) = orbit_speed {
+        // While riding, the stick and arrows are an orbital throttle:
+        // left/right (and stick x) steer CCW/CW absolutely, up/down
+        // (and stick y) push along the current direction of travel.
+        let absolute = (keys.pressed(KeyCode::ArrowLeft) as i32
+            - keys.pressed(KeyCode::ArrowRight) as i32) as f64
+            - joy.vec.x as f64;
+        let current = if speed >= 0.0 { 1.0 } else { -1.0 };
+        let along = (keys.pressed(KeyCode::ArrowUp) as i32
+            - keys.pressed(KeyCode::ArrowDown) as i32) as f64
+            + joy.vec.y as f64;
+        let input = (absolute + along * current).clamp(-1.0, 1.0);
+        let new_speed = (speed + input * ORBIT_SPEED_RATE * DT)
+            .clamp(-ORBIT_SPEED_MAX, ORBIT_SPEED_MAX);
+        *nav = NavState::Orbiting { body: target, ride_r, speed: new_speed };
+        // Riding is the recharge state: the ring does the work while
+        // the collectors bank energy.
+        ship.energy = (ship.energy + ORBIT_ENERGY_REGEN * DT).min(ship.energy_max);
+        t_ccw * (v_circ * new_speed) + r_hat * ((r_target - r) / TRANSFER_CLOSE_SIM_S)
+    } else {
+        // Transfer: burn along the current sense of rotation toward
+        // circular speed at the commanded ring.
+        let h = rel_pos.cross(rel_vel);
+        let t_hat = if h.length() > 1e-6 {
+            h.cross(rel_pos).normalized() * -1.0
+        } else {
+            t_ccw
+        };
+        t_hat * v_circ + r_hat * ((r_target - r) / TRANSFER_CLOSE_SIM_S)
+    };
+
+    let station_keeping = orbit_speed.is_some();
     let dv = v_des - rel_vel;
     let a_max = ship.thrust * TIME_WARP * if station_keeping { 0.5 } else { 4.0 };
     let need = dv.length() / dt;
     let a = if need > a_max { dv.normalized() * a_max } else { dv / dt };
 
-    // Guided burns cost energy in proportion to effort; an empty tank
-    // drops the ship back to free flight mid-transfer. Plan your energy.
-    let cost = a.length() / (ship.thrust * TIME_WARP) * 2.0 * DT;
-    if ship.energy < cost {
-        *nav = NavState::Free;
-        return;
-    }
-    ship.energy -= cost;
-    vel.0 += a * dt;
+    if station_keeping {
+        // The ride itself is free — that is the whole point of hitching.
+        vel.0 += a * dt;
+    } else {
+        // Guided burns cost energy in proportion to effort; an empty
+        // tank drops the ship back to free flight mid-transfer.
+        let cost = a.length() / (ship.thrust * TIME_WARP) * 2.0 * DT;
+        if ship.energy < cost {
+            *nav = NavState::Free;
+            return;
+        }
+        ship.energy -= cost;
+        vel.0 += a * dt;
 
-    if !station_keeping {
         let radius_ok = (r - r_target).abs() / r_target < 0.15;
         let speed_ok = (rel_vel.length() - v_circ).abs() / v_circ < 0.15;
         if radius_ok && speed_ok {
-            *nav = NavState::Orbiting { body: target, ride_r };
+            // Capture keeps the arrival's sense of rotation; the gravity
+            // drive's boost is the starting ride speed.
+            let h = rel_pos.cross(rel_vel);
+            let dir = if h.z >= 0.0 { 1.0 } else { -1.0 };
+            *nav = NavState::Orbiting {
+                body: target,
+                ride_r,
+                speed: ship.orbit_boost * dir,
+            };
         }
     }
 }

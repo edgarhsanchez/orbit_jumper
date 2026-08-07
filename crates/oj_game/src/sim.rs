@@ -994,16 +994,22 @@ fn place_child_rails(
     }
 }
 
-/// Manual thrust — keys or the virtual stick — costs energy.
+/// Manual thrust — keys or the virtual stick — costs energy. Outside an
+/// orbit the engines burn UNASSISTED and pay double; while riding an
+/// orbit the same inputs only trim the ride (guide_nav's job) and the
+/// tank is recharging, so no drain at all.
 fn ship_controls(
     keys: Res<ButtonInput<KeyCode>>,
     joy: Res<crate::stick::JoyInput>,
-    mut ships: Query<(&mut Ship, &SimVel)>,
+    mut ships: Query<(&mut Ship, &crate::command::NavState)>,
 ) {
-    let (mut ship, _vel) = match ships.single_mut() {
+    let (mut ship, nav) = match ships.single_mut() {
         Ok(s) => s,
         Err(_) => return,
     };
+    if matches!(nav, crate::command::NavState::Orbiting { .. }) {
+        return;
+    }
     let thrusting = joy.active
         || keys.any_pressed([
             KeyCode::ArrowUp,
@@ -1014,7 +1020,8 @@ fn ship_controls(
             KeyCode::KeyQ,
         ]);
     if thrusting {
-        ship.energy = (ship.energy - 4.0 * DT * TIME_WARP / 60.0).max(0.0);
+        ship.energy = (ship.energy - 8.0 * DT * TIME_WARP / 60.0).max(0.0);
+        debug!("thrust drain: energy {:.1}", ship.energy);
     }
 }
 
@@ -1023,17 +1030,20 @@ fn integrate_ships(
     joy: Res<crate::stick::JoyInput>,
     suns: Query<(&SunBody, &SimPos), Without<Ship>>,
     bodies: Query<(&CelestialBody, &SimPos), Without<Ship>>,
-    mut ships: Query<(&Ship, &mut SimPos, &mut SimVel), With<Ship>>,
+    mut ships: Query<(&Ship, &crate::command::NavState, &mut SimPos, &mut SimVel), With<Ship>>,
 ) {
     let Ok((_sun, sun_pos)) = suns.single() else { return };
-    for (ship, mut pos, mut vel) in &mut ships {
+    for (ship, nav, mut pos, mut vel) in &mut ships {
         // Every celestial pulls: this is what makes slingshots and planet
         // capture REAL physics rather than scripted moves.
         let mut accel = oj_orbits::Vec3d::ZERO;
         for (body, body_pos) in &bodies {
             accel += gravity_accel(body.mu, body_pos.0, pos.0, body.radius);
         }
-        if ship.energy > 0.0 {
+        // While riding an orbit the same inputs steer the ride speed
+        // (guide_nav), never raw thrust — an orbit is sticky.
+        let riding = matches!(nav, crate::command::NavState::Orbiting { .. });
+        if ship.energy > 0.0 && !riding {
             // Thrust in the orbital plane: prograde/retrograde on up/down,
             // radial on left/right. Scaled by warp so it stays effective.
             let prograde = vel.0.normalized();
