@@ -526,14 +526,143 @@ const TOUCH_TOPBAR_XAML: &str = r##"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0"
             Orientation="Horizontal">
-  <Button x:Name="btn_vessel" Content="VESSEL" Background="#D80B1B22" BorderBrush="#00E5FF"
-          Foreground="#00E5FF" FontSize="12" Padding="12,10" Margin="0,0,6,0"/>
-  <Button x:Name="btn_map" Content="MAP" Background="#D80B1B22" BorderBrush="#00E5FF"
-          Foreground="#00E5FF" FontSize="12" Padding="12,10" Margin="0,0,6,0"/>
-  <Button x:Name="btn_study" Content="STUDY" Background="#D80B1B22" BorderBrush="#FFB454"
-          Foreground="#FFB454" FontSize="12" Padding="12,10" Margin="0,0,6,0"/>
-  <Button x:Name="btn_view" Content="VIEW" Background="#D80B1B22" BorderBrush="#B48CFF"
-          Foreground="#B48CFF" FontSize="12" Padding="12,10"/>
+  <StackPanel.Resources>
+    <Style x:Key="con-cyan" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="66" Height="42">
+              <Path x:Name="frame" Width="66" Height="42" Stretch="Fill"
+                    Fill="#D8071018" Stroke="#00E5FF" StrokeThickness="1"
+                    Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
+              <Rectangle Width="26" Height="2" Fill="#00E5FF"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#00E5FF"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#5900E5FF"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C800E5FF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="con-amber" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="66" Height="42">
+              <Path x:Name="frame" Width="66" Height="42" Stretch="Fill"
+                    Fill="#D8141008" Stroke="#FFB454" StrokeThickness="1"
+                    Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
+              <Rectangle Width="26" Height="2" Fill="#FFB454"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#FFB454"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#59FFB454"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C8FFB454"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="con-violet-t" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="66" Height="42">
+              <Path x:Name="frame" Width="66" Height="42" Stretch="Fill"
+                    Fill="#D80E0A18" Stroke="#B48CFF" StrokeThickness="1"
+                    Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
+              <Rectangle Width="26" Height="2" Fill="#B48CFF"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#B48CFF"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#59B48CFF"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C8B48CFF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </StackPanel.Resources>
+    <Button x:Name="btn_vessel" Style="{StaticResource con-cyan}" Margin="0,0,6,0">
+      <StackPanel>
+        <TextBlock Text="VESSEL" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="TAB" Foreground="#3E5A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+    <Button x:Name="btn_map" Style="{StaticResource con-cyan}" Margin="0,0,6,0">
+      <StackPanel>
+        <TextBlock Text="MAP" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="M" Foreground="#3E5A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+    <Button x:Name="btn_study" Style="{StaticResource con-amber}" Margin="0,0,6,0">
+      <StackPanel>
+        <TextBlock Text="STUDY" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="HOLD S" Foreground="#6A5A3E" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+    <Button x:Name="btn_view" Style="{StaticResource con-violet-t}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="VIEW" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="F" Foreground="#55496A" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
 </StackPanel>
 "##;
 
@@ -542,8 +671,51 @@ const TOUCH_TOPBAR_COCKPIT_XAML: &str = r##"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0"
             Orientation="Horizontal">
-  <Button x:Name="btn_view" Content="VIEW" Background="#D80B1B22" BorderBrush="#B48CFF"
-          Foreground="#B48CFF" FontSize="12" Padding="12,10"/>
+  <StackPanel.Resources>
+    <Style x:Key="con-violet-t" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="66" Height="42">
+              <Path x:Name="frame" Width="66" Height="42" Stretch="Fill"
+                    Fill="#D80E0A18" Stroke="#B48CFF" StrokeThickness="1"
+                    Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
+              <Rectangle Width="26" Height="2" Fill="#B48CFF"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#B48CFF"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#59B48CFF"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C8B48CFF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </StackPanel.Resources>
+    <Button x:Name="btn_view" Style="{StaticResource con-violet-t}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="VIEW" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="F" Foreground="#55496A" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
 </StackPanel>
 "##;
 
@@ -551,24 +723,95 @@ const TOUCH_THRUST_XAML: &str = r##"
 <StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="@TM">
-  <StackPanel Orientation="Horizontal">
-    <Button x:Name="btn_up" Content="PRO" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
-            Foreground="#00FFD4" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
-    <Button x:Name="btn_down" Content="RET" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
-            Foreground="#00FFD4" FontSize="13" Padding="0,14"/>
-  </StackPanel>
-  <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-    <Button x:Name="btn_left" Content="IN" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
-            Foreground="#00FFD4" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
-    <Button x:Name="btn_right" Content="OUT" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
-            Foreground="#00FFD4" FontSize="13" Padding="0,14"/>
-  </StackPanel>
-  <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-    <Button x:Name="btn_climb" Content="VERT+" Width="66" Background="#D80B1B22" BorderBrush="#B48CFF"
-            Foreground="#B48CFF" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
-    <Button x:Name="btn_dive" Content="VERT-" Width="66" Background="#D80B1B22" BorderBrush="#B48CFF"
-            Foreground="#B48CFF" FontSize="13" Padding="0,14"/>
-  </StackPanel>
+  <StackPanel.Resources>
+    <Style x:Key="con-teal" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="66" Height="52">
+              <Path x:Name="frame" Width="66" Height="52" Stretch="Fill"
+                    Fill="#D8081514" Stroke="#00FFD4" StrokeThickness="1"
+                    Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
+              <Rectangle Width="26" Height="2" Fill="#00FFD4"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#00FFD4"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#5900FFD4"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C800FFD4"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </StackPanel.Resources>
+  <Border Background="#C8060C12" BorderBrush="#12333A" BorderThickness="1" Padding="8,6">
+    <StackPanel>
+      <StackPanel Orientation="Horizontal">
+        <Rectangle Width="12" Height="2" Fill="#00FFD4" Margin="0,5,6,0"/>
+        <TextBlock Text="THRUST_CTRL_L" Foreground="#3E6A66" FontSize="9"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_up" Style="{StaticResource con-teal}" Margin="0,0,6,0">
+      <StackPanel>
+        <TextBlock Text="PRO" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="FWD" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+    <Button x:Name="btn_down" Style="{StaticResource con-teal}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="RET" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="AFT" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_left" Style="{StaticResource con-teal}" Margin="0,0,6,0">
+      <StackPanel>
+        <TextBlock Text="IN" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="RAD-" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+    <Button x:Name="btn_right" Style="{StaticResource con-teal}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="OUT" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="RAD+" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_climb" Style="{StaticResource con-teal}" Margin="0,0,6,0">
+      <StackPanel>
+        <TextBlock Text="VERT+" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="ASC E" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+    <Button x:Name="btn_dive" Style="{StaticResource con-teal}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="VERT-" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="DSC Q" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+      </StackPanel>
+    </StackPanel>
+  </Border>
 </StackPanel>
 "##;
 
@@ -576,18 +819,118 @@ const TOUCH_WEAPONS_XAML: &str = r##"
 <StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,8,8">
-  <StackPanel Orientation="Horizontal">
-    <Button x:Name="btn_las" Content="LAS" Width="66" Background="#D80B1B22" BorderBrush="#FF7043"
-            Foreground="#FF7043" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
-    <Button x:Name="btn_msl" Content="MSL" Width="66" Background="#D80B1B22" BorderBrush="#FF7043"
-            Foreground="#FF7043" FontSize="13" Padding="0,14"/>
-  </StackPanel>
-  <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-    <Button x:Name="btn_pull" Content="PULL" Width="66" Background="#D80B1B22" BorderBrush="#B48CFF"
-            Foreground="#B48CFF" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
-    <Button x:Name="btn_push" Content="PUSH" Width="66" Background="#D80B1B22" BorderBrush="#B48CFF"
-            Foreground="#B48CFF" FontSize="13" Padding="0,14"/>
-  </StackPanel>
+  <StackPanel.Resources>
+    <Style x:Key="con-orange" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="66" Height="52">
+              <Path x:Name="frame" Width="66" Height="52" Stretch="Fill"
+                    Fill="#D8140B08" Stroke="#FF7043" StrokeThickness="1"
+                    Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
+              <Rectangle Width="26" Height="2" Fill="#FF7043"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#FF7043"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#59FF7043"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C8FF7043"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="con-violet" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="66" Height="52">
+              <Path x:Name="frame" Width="66" Height="52" Stretch="Fill"
+                    Fill="#D80E0A18" Stroke="#B48CFF" StrokeThickness="1"
+                    Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
+              <Rectangle Width="26" Height="2" Fill="#B48CFF"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#B48CFF"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#59B48CFF"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C8B48CFF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </StackPanel.Resources>
+  <Border Background="#C8060C12" BorderBrush="#12333A" BorderThickness="1" Padding="8,6">
+    <StackPanel>
+      <StackPanel Orientation="Horizontal">
+        <Rectangle Width="12" Height="2" Fill="#FF7043" Margin="0,5,6,0"/>
+        <TextBlock Text="WPN_SYST_R" Foreground="#6A4A3E" FontSize="9"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_las" Style="{StaticResource con-orange}" Margin="0,0,6,0">
+      <StackPanel>
+        <TextBlock Text="LAS" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="HOLD Z" Foreground="#6A4A3E" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+    <Button x:Name="btn_msl" Style="{StaticResource con-orange}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="MSL" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="X" Foreground="#6A4A3E" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_pull" Style="{StaticResource con-violet}" Margin="0,0,6,0">
+      <StackPanel>
+        <TextBlock Text="PULL" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="WELL C" Foreground="#55496A" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+    <Button x:Name="btn_push" Style="{StaticResource con-violet}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="PUSH" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="WELL V" Foreground="#55496A" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+      </StackPanel>
+    </StackPanel>
+  </Border>
 </StackPanel>
 "##;
 

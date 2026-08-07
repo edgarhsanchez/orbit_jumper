@@ -25,3 +25,7 @@ orbit_jumper_achievements.ron
 orbit_jumper_feed.ron
 orbit_jumper_career.ron
 orbit_jumper_style.ron
+
+# wasm build outputs (CI rebuilds them; dist is generated)
+target-wasm
+web/dist
