@@ -273,7 +273,7 @@ impl Plugin for CommandPlugin {
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn on_press(
-    ev: On<Pointer<Press>>,
+    mut ev: On<Pointer<Press>>,
     rings: Query<&OrbitRing>,
     celestials: Query<(Entity, &CelestialBody, &SimPos, &BodyVel)>,
     transforms: Query<&GlobalTransform>,
@@ -290,6 +290,11 @@ fn on_press(
     // A press on a ring commands THAT orbit; a press on the body itself
     // commands its innermost ring.
     let picked = if let Ok(ring) = rings.get(ev.entity) {
+        // Rings are CHILDREN of their body and picking events bubble up
+        // the hierarchy — without this, the same press re-fires on the
+        // body and overwrites this plan with one for the innermost ring
+        // (the "every click flies to the orbit closest to the sun" bug).
+        ev.propagate(false);
         Some((ring.body, ring.ride_r))
     } else {
         celestials
