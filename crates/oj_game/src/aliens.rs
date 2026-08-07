@@ -75,8 +75,23 @@ pub struct AlienBolt {
     ttl: f64,
 }
 
-/// Seconds (real) between spawn checks.
-const SPAWN_PERIOD: f64 = 20.0;
+/// Seconds between spawn waves: 20 at level 1, tightening toward a
+/// 6-second floor as the pilot climbs — the bullet-hell curve.
+fn spawn_period(level: u32) -> f64 {
+    (20.0 / (1.0 + 0.12 * level.saturating_sub(1) as f64)).max(6.0)
+}
+
+/// How many hostiles the system keeps in the air at once: 1 at level 1,
+/// climbing two per three levels to a dozen-ship swarm.
+fn pack_cap(level: u32) -> usize {
+    ((1 + level * 2 / 3) as usize).min(12)
+}
+
+/// Hostiles per spawn wave — depth arrives in gangs, not single file.
+fn wave_size(level: u32) -> usize {
+    ((1 + level / 5) as usize).min(3)
+}
+
 /// Raiders open fire inside this range, m.
 const FIRE_RANGE: f64 = 8.0e9;
 /// Bolt proximity fuse, m.
@@ -105,7 +120,7 @@ struct TrajPool {
 /// real seconds of relative motion at warp 600).
 const TRAJ_STEPS: usize = 8;
 const TRAJ_STEP_SIM_S: f64 = 800.0;
-const MAX_TRACKED: usize = 6;
+const MAX_TRACKED: usize = 10;
 
 pub struct AliensPlugin;
 
@@ -141,10 +156,9 @@ fn spawn_raiders(
     if clock.0 > 0.0 {
         return;
     }
-    clock.0 = SPAWN_PERIOD;
-    let Ok((ship_pos, ship_vel)) = ships.single() else { return };
-
     let level = pilot_level(run.total());
+    clock.0 = spawn_period(level);
+    let Ok((ship_pos, ship_vel)) = ships.single() else { return };
 
     // Arrive from a seed-random bearing, well outside weapons range,
     // velocity matched so the approach is deliberate, not a flyby.
@@ -158,7 +172,9 @@ fn spawn_raiders(
     // Every few pilot levels the pack yields to a DREADNOUGHT: one at a
     // time, a dozen raiders' worth of hull, volley fire, boss bounty.
     if level >= boss_clock.next_level && bosses.iter().count() == 0 {
-        boss_clock.next_level = level + 5;
+        // Owed-boss spacing tightens with depth: every 5 levels early,
+        // every 2 past level 24 — capitals become a fact of life.
+        boss_clock.next_level = level + (5u32.saturating_sub(level / 8)).max(2);
         spawn_hostile(
             &mut commands,
             &mut meshes,
@@ -187,15 +203,19 @@ fn spawn_raiders(
         return;
     }
 
-    let pack_cap = (1 + level / 3).min(6) as usize;
-    if aliens.iter().count() >= pack_cap {
+    let cap = pack_cap(level);
+    let live = aliens.iter().count();
+    if live >= cap {
         return;
     }
+    let wave = wave_size(level).min(cap - live);
 
-    // Elites appear from level 6, more often the deeper you go; weavers
-    // join from level 4 and turn the arena into a minefield.
-    let elite_chance = if level >= 6 {
-        (0.12 + 0.02 * level as f64).min(0.5)
+    // Elites appear from level 4, more often the deeper you go; weavers
+    // join from level 3 and turn the arena into a minefield; from level
+    // 12 even a DREADNOUGHT can arrive as a regular spawn — the larger
+    // the pilot flies, the larger what hunts them.
+    let elite_chance = if level >= 4 {
+        (0.10 + 0.03 * level as f64).min(0.6)
     } else {
         0.0
     };
@@ -203,21 +223,37 @@ fn spawn_raiders(
     // the minefield path can be exercised on demand.
     let weaver_chance = if std::env::var("OJ_WEAVER").is_ok() {
         1.0
-    } else if level >= 4 {
-        0.22
+    } else if level >= 3 {
+        0.20
     } else {
         0.0
     };
-    let roll = rng.range(0.0, 1.0);
-    let (spec, kind) = if roll < elite_chance {
-        (HostileSpec::elite(level), "elite")
-    } else if roll < elite_chance + weaver_chance {
-        (HostileSpec::weaver(level), "weaver")
+    let mut heavy_chance = if level >= 12 && bosses.iter().count() == 0 {
+        (0.05 + 0.01 * (level - 12) as f64).min(0.15)
     } else {
-        (HostileSpec::raider(level), "raider")
+        0.0
     };
-    spawn_hostile(&mut commands, &mut meshes, &mut materials, pos, ship_vel.0, spec);
-    info!("{kind} inbound (level {level}, pack cap {pack_cap})");
+    for n in 0..wave {
+        // Each ship in the wave gets its own bearing — a gang closing
+        // from several directions, not a queue on one vector.
+        let bearing = rng.range(0.0, std::f64::consts::TAU);
+        let dist = rng.range(1.6e10, 2.4e10);
+        let pos = ship_pos.0 + Vec3d::new(bearing.cos() * dist, bearing.sin() * dist, 0.0);
+        let roll = rng.range(0.0, 1.0);
+        let (spec, kind) = if roll < heavy_chance {
+            // One capital per wave is plenty.
+            heavy_chance = 0.0;
+            (HostileSpec::dreadnought(level), "dreadnought")
+        } else if roll < heavy_chance + elite_chance {
+            (HostileSpec::elite(level), "elite")
+        } else if roll < heavy_chance + elite_chance + weaver_chance {
+            (HostileSpec::weaver(level), "weaver")
+        } else {
+            (HostileSpec::raider(level), "raider")
+        };
+        spawn_hostile(&mut commands, &mut meshes, &mut materials, pos, ship_vel.0, spec);
+        info!("{kind} inbound (level {level}, wave {wave}, pack {}/{cap})", live + n + 1);
+    }
 }
 
 /// Everything that varies between a raider, an elite, a weaver and a
@@ -780,5 +816,29 @@ fn fly_mines(
             ship.shield, ship.hull, ship.energy
         );
         commands.entity(entity).despawn();
+    }
+}
+
+#[cfg(test)]
+mod pacing_tests {
+    use super::*;
+
+    /// The bullet-hell contract: cadence tightens to a floor, packs grow
+    /// to a hard cap, waves thicken — all monotone in pilot level, so a
+    /// higher level never means a quieter sky.
+    #[test]
+    fn bullet_hell_curve_scales_with_level() {
+        assert!(spawn_period(1) > spawn_period(5));
+        assert!(spawn_period(5) > spawn_period(12));
+        assert!((spawn_period(1) - 20.0).abs() < 1e-9, "level 1 keeps the gentle cadence");
+        assert!((spawn_period(60) - 6.0).abs() < 1e-9, "floor holds");
+
+        assert_eq!(pack_cap(1), 1, "level 1 still faces one raider");
+        assert!(pack_cap(6) > pack_cap(3));
+        assert_eq!(pack_cap(40), 12, "swarm cap holds");
+
+        assert_eq!(wave_size(1), 1);
+        assert_eq!(wave_size(10), 3);
+        assert_eq!(wave_size(50), 3);
     }
 }
