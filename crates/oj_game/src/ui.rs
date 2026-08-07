@@ -100,6 +100,7 @@ struct HudVm {
     map: Vec<MapRowVm>,
     map_status: String,
     level: String,
+    plan: f64,
     sp_line: String,
     repair_line: String,
     repair_color: String,
@@ -304,6 +305,8 @@ const HUD_XAML: &str = r##"
   <Border Background="#F00D131C" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,8" Width="236" Margin="0,8,0,0">
     <StackPanel>
       <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10"/>
+      <ProgressBar Width="214" Height="3" Maximum="100" Value="{Binding plan}"
+                   Foreground="#00E5FF" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
       <TextBlock Text="{Binding arm}" Foreground="#FFB454" FontSize="10"/>
       <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="10">
       <TextBlock.Triggers>
@@ -571,6 +574,8 @@ const COCKPIT_CONSOLE_XAML: &str = r##"
     <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="16" FontWeight="Bold"
                HorizontalAlignment="Center"/>
     <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10" Margin="0,2,0,0"/>
+    <ProgressBar Width="214" Height="3" Maximum="100" Value="{Binding plan}"
+                 Foreground="#00E5FF" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
     <TextBlock Text="{Binding target}" Foreground="#FF5459" FontSize="10" Margin="0,2,0,0"
                HorizontalAlignment="Center">
     <TextBlock.Triggers>
@@ -1701,6 +1706,7 @@ fn update_hud(
     ),
     mut sfx: MessageWriter<crate::audio::Sfx>,
     mut was_critical: Local<bool>,
+    planner: Res<crate::command::FlightPlanner>,
 ) {
     let (Some(model), Ok((ship, vel, nav, ship_pos))) = (model, ships.single()) else {
         return;
@@ -1711,9 +1717,17 @@ fn update_hud(
             .map(|b| b.name.to_uppercase())
             .unwrap_or_else(|_| "?".into())
     };
-    let nav_text = if let (Some(target), true) = (hold.target, hold.out_of_range) {
+    let nav_text = if let Some(job) = planner.0.as_ref() {
+        model.0.set_plan(job.progress * 100.0);
+        format!(">> CALCULATING FLIGHT PLAN {:.0}%", job.progress * 100.0)
+    } else if let (Some(target), true) = (hold.target, hold.no_energy) {
+        model.0.set_plan(0.0);
+        format!(">> {}: INSUFFICIENT ENERGY", name(target))
+    } else if let (Some(target), true) = (hold.target, hold.out_of_range) {
+        model.0.set_plan(0.0);
         format!(">> {}: OUT OF RANGE", name(target))
     } else {
+        model.0.set_plan(0.0);
         match *nav {
             NavState::Free => ">> FREE FLIGHT — CLICK AN ORBIT".into(),
             NavState::Transfer { target, .. } => format!(">> TRANSFER: {}", name(target)),

@@ -44,6 +44,7 @@ impl Plugin for SimPlugin {
                     flame_visibility,
                     camera_zoom,
                     toggle_view,
+                    tint_rings,
                     drive_camera.after(sync_render_transforms).after(orient_ship),
                 ),
             );
@@ -173,6 +174,7 @@ pub struct OrbitRing {
 pub struct OrbitRingMaterials {
     pub dim: Handle<StandardMaterial>,
     pub bright: Handle<StandardMaterial>,
+    pub unreachable: Handle<StandardMaterial>,
 }
 
 /// Candidate ride orbits for a body, innermost first: fixed multiples of
@@ -389,9 +391,17 @@ pub fn spawn_bodies(
         unlit: true,
         ..default()
     });
+    // Out of energy reach: unmistakably gray, and the click bounces.
+    let ring_unreachable = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.55, 0.58, 0.62, 0.22),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
     commands.insert_resource(OrbitRingMaterials {
         dim: ring_dim.clone(),
         bright: ring_bright,
+        unreachable: ring_unreachable,
     });
 
     // Sun at the origin of the system-local frame.
@@ -672,8 +682,13 @@ fn spawn_rings_for(
 fn ring_hover_on(
     over: On<bevy::picking::events::Pointer<bevy::picking::events::Over>>,
     mats: Res<OrbitRingMaterials>,
+    reach: Res<crate::command::RingReach>,
     mut rings: Query<&mut MeshMaterial3d<StandardMaterial>, With<OrbitRing>>,
 ) {
+    // An unreachable ring does not light up: the gray IS the answer.
+    if reach.flags.get(&over.entity).copied() == Some(false) {
+        return;
+    }
     if let Ok(mut m) = rings.get_mut(over.entity) {
         m.0 = mats.bright.clone();
     }
@@ -682,10 +697,34 @@ fn ring_hover_on(
 fn ring_hover_off(
     out: On<bevy::picking::events::Pointer<bevy::picking::events::Out>>,
     mats: Res<OrbitRingMaterials>,
+    reach: Res<crate::command::RingReach>,
     mut rings: Query<&mut MeshMaterial3d<StandardMaterial>, With<OrbitRing>>,
 ) {
     if let Ok(mut m) = rings.get_mut(out.entity) {
-        m.0 = mats.dim.clone();
+        m.0 = if reach.flags.get(&out.entity).copied() == Some(false) {
+            mats.unreachable.clone()
+        } else {
+            mats.dim.clone()
+        };
+    }
+}
+
+/// Keep every ring's base tint in line with the standing reachability
+/// verdict; the hover brighten stays untouched for reachable rings.
+fn tint_rings(
+    reach: Res<crate::command::RingReach>,
+    mats: Res<OrbitRingMaterials>,
+    mut rings: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>), With<OrbitRing>>,
+) {
+    for (entity, mut m) in &mut rings {
+        let reachable = reach.flags.get(&entity).copied().unwrap_or(true);
+        if !reachable {
+            if m.0 != mats.unreachable {
+                m.0 = mats.unreachable.clone();
+            }
+        } else if m.0 == mats.unreachable {
+            m.0 = mats.dim.clone();
+        }
     }
 }
 
