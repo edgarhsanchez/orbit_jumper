@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use oj_orbits::Vec3d;
 
 use crate::modules::{CareerScore, RunScore};
-use crate::sim::{BodyVel, DT, Ship, SystemScoped, TIME_WARP};
+use crate::sim::{BodyVel, DT, Ship, SystemScoped, TIME_WARP, ViewMode};
 use crate::upgrades::pilot_level;
 use crate::weapons::{Bounty, Hull};
 use crate::{SimPos, SimVel};
@@ -41,15 +41,33 @@ const BOLT_FUSE: f64 = 5.0e8;
 #[derive(Resource)]
 struct RaiderClock(f64);
 
+/// One dot of a predicted raider path.
+#[derive(Component)]
+pub struct TrajDot;
+
+/// The trajectory dot pool: spawned once, repositioned every frame.
+#[derive(Resource, Default)]
+struct TrajPool {
+    dots: Vec<Entity>,
+}
+
+/// Prediction: steps ahead at this sim-second spacing (8 x 800 s ~ 13
+/// real seconds of relative motion at warp 600).
+const TRAJ_STEPS: usize = 8;
+const TRAJ_STEP_SIM_S: f64 = 800.0;
+const MAX_TRACKED: usize = 6;
+
 pub struct AliensPlugin;
 
 impl Plugin for AliensPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(RaiderClock(8.0))
+            .init_resource::<TrajPool>()
             .add_systems(
                 FixedUpdate,
                 (spawn_raiders, alien_ai, fly_bolts).chain(),
-            );
+            )
+            .add_systems(Update, project_trajectories);
     }
 }
 
@@ -183,6 +201,83 @@ fn alien_ai(
                 })),
                 Transform::default(),
             ));
+        }
+    }
+}
+
+/// Cockpit targeting: lay each raider's predicted path out as fading
+/// dots. Prediction is in the SHIP-RELATIVE frame anchored at the
+/// ship's current position — where the raider will be relative to you,
+/// which is the question a gunner is actually asking.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn project_trajectories(
+    view: Res<ViewMode>,
+    ships: Query<(&SimPos, &SimVel), (With<Ship>, Without<AlienShip>, Without<TrajDot>)>,
+    aliens: Query<(&SimPos, &SimVel), (With<AlienShip>, Without<TrajDot>)>,
+    mut pool: ResMut<TrajPool>,
+    mut dots: Query<(&mut SimPos, &mut Visibility), With<TrajDot>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Lazily build the pool: MAX_TRACKED paths of TRAJ_STEPS dots each,
+    // alpha fading with distance into the future.
+    if pool.dots.is_empty() {
+        let mesh = meshes.add(Sphere::new(1.6).mesh().ico(1).unwrap());
+        let mats: Vec<Handle<StandardMaterial>> = (0..TRAJ_STEPS)
+            .map(|i| {
+                let a = 0.75 * (1.0 - i as f32 / TRAJ_STEPS as f32) + 0.1;
+                materials.add(StandardMaterial {
+                    base_color: Color::srgba(1.0, 0.35, 0.9, a),
+                    alpha_mode: AlphaMode::Blend,
+                    unlit: true,
+                    ..default()
+                })
+            })
+            .collect();
+        for _ in 0..MAX_TRACKED {
+            for (i, mat) in mats.iter().enumerate().take(TRAJ_STEPS) {
+                let e = commands
+                    .spawn((
+                        TrajDot,
+                        SimPos::default(),
+                        Mesh3d(mesh.clone()),
+                        MeshMaterial3d(mat.clone()),
+                        Transform::default(),
+                        Visibility::Hidden,
+                    ))
+                    .id();
+                pool.dots.push(e);
+                let _ = i;
+            }
+        }
+        return;
+    }
+
+    let ship = ships.single().ok();
+    let mut cursor = 0usize;
+    if *view == ViewMode::Cockpit
+        && let Some((_ship_pos, ship_vel)) = ship
+    {
+        for (a_pos, a_vel) in aliens.iter().take(MAX_TRACKED) {
+            let rel_vel = a_vel.0 - ship_vel.0;
+            for step in 0..TRAJ_STEPS {
+                let Some(&dot) = pool.dots.get(cursor) else { break };
+                cursor += 1;
+                if let Ok((mut pos, mut vis)) = dots.get_mut(dot) {
+                    let t = TRAJ_STEP_SIM_S * (step + 1) as f64;
+                    pos.0 = a_pos.0 + rel_vel * t;
+                    *vis = Visibility::Inherited;
+                }
+            }
+        }
+    }
+    // Park the rest.
+    for &dot in pool.dots.iter().skip(cursor) {
+        if let Ok((_, mut vis)) = dots.get_mut(dot) {
+            if *vis != Visibility::Hidden {
+                *vis = Visibility::Hidden;
+            }
         }
     }
 }

@@ -41,6 +41,15 @@ struct UpgradeRowVm {
     param: String,
 }
 
+/// One cockpit contact row: targeting data for a raider.
+#[derive(Reflect, Clone, PartialEq, Default)]
+struct ContactVm {
+    name: String,
+    /// "DST 1.42 GM · VEL 310 KM/S · CLS +12"
+    data: String,
+    color: String,
+}
+
 /// One destination row of the galaxy map.
 #[derive(Reflect, Clone, PartialEq, Default)]
 struct MapRowVm {
@@ -90,6 +99,7 @@ struct HudVm {
     style: String,
     threat: String,
     heading: String,
+    contacts: Vec<ContactVm>,
 }
 
 #[derive(Resource, Clone)]
@@ -397,6 +407,27 @@ const COCKPIT_THREAT_XAML: &str = r##"
             HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,10,12,0">
   <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="11"/>
 </StackPanel>
+"##;
+
+const COCKPIT_CONTACTS_XAML: &str = r##"
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,34,12,0"
+        Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,6" Width="252">
+  <StackPanel>
+    <TextBlock Text="CONTACTS" Foreground="#5A6472" FontSize="10"/>
+    <ItemsControl ItemsSource="{Binding contacts}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <StackPanel Margin="0,4,0,0">
+            <TextBlock Text="{Binding name}" Foreground="{Binding color}" FontSize="11"/>
+            <TextBlock Text="{Binding data}" Foreground="#8A93A0" FontSize="10"/>
+          </StackPanel>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </StackPanel>
+</Border>
 "##;
 
 const COCKPIT_CONSOLE_XAML: &str = r##"
@@ -746,6 +777,7 @@ fn relayout_ui(world: &mut World) {
             (m.fill(COCKPIT_TAPE_XAML), Doc::Hud),
             (m.fill(COCKPIT_RETICLE_XAML), Doc::Hud),
             (m.fill(COCKPIT_THREAT_XAML), Doc::Hud),
+            (m.fill(COCKPIT_CONTACTS_XAML), Doc::Hud),
             (m.fill(COCKPIT_CONSOLE_XAML), Doc::Hud),
             (m.fill(TOUCH_THRUST_XAML), Doc::Controls),
             (m.fill(TOUCH_WEAPONS_XAML), Doc::Controls),
@@ -812,7 +844,7 @@ fn relayout_ui(world: &mut World) {
 #[allow(clippy::too_many_arguments)]
 fn update_hud(
     model: Option<Res<HudModel>>,
-    ships: Query<(&Ship, &crate::SimVel, &NavState)>,
+    ships: Query<(&Ship, &crate::SimVel, &NavState, &crate::SimPos)>,
     suns: Query<&SunBody>,
     bodies: Query<&CelestialBody>,
     hold: Res<CommandHold>,
@@ -828,11 +860,11 @@ fn update_hud(
         Res<crate::GameUniverse>,
         Res<crate::travel::SunAtlas>,
         Res<crate::sim::ShipStyle>,
-        Query<(), With<crate::aliens::AlienShip>>,
+        Query<(&crate::SimPos, &crate::SimVel), With<crate::aliens::AlienShip>>,
         ResMut<crate::travel::MapRows>,
     ),
 ) {
-    let (Some(model), Ok((ship, vel, nav))) = (model, ships.single()) else {
+    let (Some(model), Ok((ship, vel, nav, ship_pos))) = (model, ships.single()) else {
         return;
     };
     let name = |e: bevy::prelude::Entity| {
@@ -884,6 +916,42 @@ fn update_hud(
     } else {
         String::new()
     });
+
+    // Cockpit targeting: nearest contacts with distance, relative speed
+    // and closing rate. Closing (+) means it is coming for you.
+    let mut contacts: Vec<(f64, ContactVm)> = Vec::new();
+    for (i, (a_pos, a_vel)) in raider_q.iter().enumerate() {
+        let rel = a_pos.0 - ship_pos.0;
+        let dist = rel.length();
+        let rel_v = a_vel.0 - vel.0;
+        let closing = if dist > 1.0 { -(rel.dot(rel_v)) / dist } else { 0.0 };
+        let in_laser = dist < 6.0e9;
+        contacts.push((
+            dist,
+            ContactVm {
+                name: format!(
+                    "RAIDER-{}{}",
+                    i + 1,
+                    if in_laser { "  [IN RANGE]" } else { "" }
+                ),
+                data: format!(
+                    "DST {:.2} GM · VEL {:.0} KM/S · CLS {:+.0} KM/S",
+                    dist / 1.0e9,
+                    rel_v.length() / 1000.0,
+                    closing / 1000.0
+                ),
+                color: if in_laser {
+                    "#FF5459".into()
+                } else if closing > 0.0 {
+                    "#FFB454".into()
+                } else {
+                    "#5A6472".into()
+                },
+            },
+        ));
+    }
+    contacts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    model.0.set_contacts(contacts.into_iter().map(|(_, c)| c).take(5).collect());
     if let Ok(sun) = suns.single() {
         model.0.set_sun_class(if study.revealed {
             format!(
