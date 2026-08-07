@@ -151,11 +151,13 @@ pub enum ViewMode {
 pub struct CameraRig {
     pub zoom: f32,
     pub pitch: f32,
+    /// Azimuth around the ship, radians — the pan pad swings it.
+    pub yaw: f32,
 }
 
 impl Default for CameraRig {
     fn default() -> Self {
-        Self { zoom: 600.0, pitch: 1.0 }
+        Self { zoom: 600.0, pitch: 1.0, yaw: 0.0 }
     }
 }
 
@@ -1118,8 +1120,8 @@ fn drive_camera(
         ViewMode::Tactical => {
             let z = rig.zoom;
             let (sin_p, cos_p) = rig.pitch.sin_cos();
-            Transform::from_translation(Vec3::new(0.0, -z * cos_p, z * sin_p))
-                .looking_at(Vec3::ZERO, Vec3::Z)
+            let eye = Quat::from_rotation_z(rig.yaw) * Vec3::new(0.0, -z * cos_p, z * sin_p);
+            Transform::from_translation(eye).looking_at(Vec3::ZERO, Vec3::Z)
         }
         ViewMode::Cockpit => {
             // Full-3D chase: the view pitches with climbs and dives. The

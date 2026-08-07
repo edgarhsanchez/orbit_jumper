@@ -81,8 +81,8 @@ rotation.
 | Gravity wells¹ | `C` / `V` | **PULL / PUSH** |
 | Craft gear tiers | `1`–`8` | vessel panel CRAFT buttons |
 | Vessel / map / study | `Tab` / `M` / `S` | topbar buttons |
-| Zoom | mouse wheel or hold `-` / `=` | — |
-| Tilt the view | hold `[` / `]` | — |
+| Zoom | mouse wheel, hold `-` / `=`, or drag the blue slider | drag the blue slider |
+| Pan / tilt around the ship | drag the yellow pad (or hold `[` / `]` to tilt) | drag the yellow pad |
 
 ¹ once the weapon system is crafted — uninstalled weapons show no controls.
 

@@ -13,7 +13,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use oj_materials::{Element, UpgradeSlot};
 
-use crate::modules::{CareerScore, RunScore, Stash};
+use crate::modules::{RunScore, Stash};
 use crate::sim::Ship;
 
 /// Skill points banked per pilot level gained.

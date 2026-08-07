@@ -1291,6 +1291,39 @@ struct ExitOrbitPanel(Entity);
 #[derive(Resource)]
 struct DeathPanel(Entity);
 
+/// The camera control cluster, named for the drag systems: `pan_knob`
+/// inside the yellow pan pad, `zoom_knob` riding the darker-blue
+/// vertical zoom track.
+#[derive(Resource)]
+pub struct PanZoomUi {
+    pub pan_knob: Entity,
+    pub zoom_knob: Entity,
+}
+
+/// Camera controls, Stitch terminal styling: a pan pad shaped like the
+/// NAV stick but smaller and in the game's yellow (#FFB454), with a
+/// thin zoom slider to its LEFT in a darker blue. Geometry constants
+/// live in stick.rs (`PAN_*`/`ZOOMBAR_*`) — the markup and the drag
+/// math must agree.
+const PAN_ZOOM_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+            Margin="0,0,110,12">
+  <Border Width="14" Height="96" Background="#D00A1420" BorderBrush="#1B6FA8"
+          BorderThickness="1" CornerRadius="7" Margin="0,0,8,0" VerticalAlignment="Bottom">
+    <Border x:Name="zoom_knob" Width="8" Height="12" Background="#1B6FA8" CornerRadius="4"
+            HorizontalAlignment="Center" VerticalAlignment="Top"/>
+  </Border>
+  <Border Width="84" Height="84" Background="#D00D131C" BorderBrush="#FFB454"
+          BorderThickness="1" CornerRadius="42" VerticalAlignment="Bottom">
+    <Border x:Name="pan_knob" Width="30" Height="30" Background="#40FFB454" BorderBrush="#FFB454"
+            BorderThickness="1" CornerRadius="15"
+            HorizontalAlignment="Center" VerticalAlignment="Center"/>
+  </Border>
+</StackPanel>
+"##;
+
 /// The destroyed-vessel screen: what the run was worth, what survives,
 /// and the invitation to fly again. Enter works too.
 const DEATH_XAML: &str = r##"
@@ -1554,6 +1587,7 @@ fn relayout_ui(world: &mut World) {
         Controls,
         ExitOrbit,
         Death,
+        PanZoom,
     }
     // The audit that decides what lives where: tactical carries the
     // management surface (sensors, meta, yard, map); the cockpit carries
@@ -1586,6 +1620,10 @@ fn relayout_ui(world: &mut World) {
     };
     docs.push((m.fill(EXIT_ORBIT_XAML), Doc::ExitOrbit));
     docs.push((DEATH_XAML.to_string(), Doc::Death));
+    if !cockpit {
+        // Camera controls belong to the tactical overview.
+        docs.push((PAN_ZOOM_XAML.to_string(), Doc::PanZoom));
+    }
     if m.touch_controls {
         let topbar = if cockpit { TOUCH_TOPBAR_COCKPIT_XAML } else { TOUCH_TOPBAR_XAML };
         docs.push((m.fill(topbar), Doc::Controls));
@@ -1650,6 +1688,18 @@ fn relayout_ui(world: &mut World) {
                     .entity_mut(root)
                     .insert((Visibility::Hidden, GlobalZIndex(40)));
                 world.insert_resource(DeathPanel(root));
+            }
+            Doc::PanZoom => {
+                // Drag rides window-space math (stick.rs), so nothing in
+                // this tree needs — or should swallow — picks.
+                ignore_picking_recursive(world, root);
+                let names = world
+                    .get::<XamlNames>(root)
+                    .map(|n| (n.get("pan_knob"), n.get("zoom_knob")))
+                    .unwrap_or((None, None));
+                if let (Some(pan_knob), Some(zoom_knob)) = names {
+                    world.insert_resource(PanZoomUi { pan_knob, zoom_knob });
+                }
             }
             Doc::Controls => {
                 // Wire each named button to its virtual key.
