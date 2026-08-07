@@ -30,3 +30,4 @@ orbit_jumper_style.ron
 target-wasm
 web/dist
 orbit_jumper_loadout.ron
+orbit_jumper_save.ron

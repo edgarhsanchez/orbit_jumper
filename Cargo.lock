@@ -4046,6 +4046,7 @@ dependencies = [
  "rodio",
  "ron 0.11.0",
  "serde",
+ "web-sys",
 ]
 
 [[package]]

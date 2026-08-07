@@ -59,8 +59,9 @@ fn run_study(
 // Scorecard
 // ---------------------------------------------------------------------------
 
-/// Per-run stats, reset on death.
-#[derive(Resource, Default, Clone)]
+/// Per-run stats, reset on death. Serializable so the autosave can
+/// carry a run across a relaunch (save.rs).
+#[derive(Resource, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunScore {
     pub seconds_survived: f64,
     pub energy_harvested: f64,
@@ -131,21 +132,17 @@ pub struct CareerScore {
     pub level_seen: u32,
 }
 
-fn career_path() -> std::path::PathBuf {
-    // Local persistence first; the global board arrives with the net phase.
-    std::path::PathBuf::from("orbit_jumper_career.ron")
-}
-
 impl CareerScore {
     pub fn load() -> Self {
-        std::fs::read_to_string(career_path())
-            .ok()
+        // Through the storage seam so the web build persists too
+        // (localStorage); native keeps the same file as before.
+        crate::storage::load("career")
             .and_then(|s| ron::from_str(&s).ok())
             .unwrap_or_default()
     }
     pub fn save(&self) {
         if let Ok(text) = ron::to_string(self) {
-            let _ = std::fs::write(career_path(), text);
+            crate::storage::save("career", &text);
         }
     }
     pub fn absorb(&mut self, run: &RunScore) {
@@ -333,6 +330,8 @@ fn spawn_wrecks(
         awaiting.0 = true;
         career.absorb(&run);
         *run = RunScore::default();
+        // A finished run cannot be resumed — rank dies with the hull.
+        crate::save::clear_save();
         // Going down IS an event — the biggest fireball in the game.
         crate::fx::spawn_explosion(
             &mut commands,

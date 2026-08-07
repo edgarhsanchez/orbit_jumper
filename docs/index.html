@@ -11,6 +11,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#05070d">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <style>
     html, body {
       margin: 0; padding: 0;
@@ -49,11 +52,64 @@
       animation: sweep 1.1s linear infinite;
     }
     @keyframes sweep { from { transform: translateX(-100%);} to { transform: translateX(350%);} }
+    #install {
+      position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+      display: none; align-items: center; gap: 10px;
+      padding: 8px 14px; z-index: 20;
+      color: #00e5ff; background: rgba(10, 20, 32, .92);
+      border: 1px solid #134156; border-radius: 3px;
+      font: 11px/1.4 ui-monospace, Menlo, monospace; letter-spacing: .14em;
+      cursor: pointer;
+    }
+    #install b { color: #ffb454; font-weight: 600; }
+    #install span.x { color: #5a6472; padding-left: 6px; }
   </style>
 </head>
 <body>
   <div id="wrap"><canvas id="game"></canvas></div>
   <div id="loading">ORBIT_JUMPER_OS · LINKING<div class="bar"><i></i></div></div>
+  <div id="install"></div>
+  <script>
+    // Install-to-home-screen. Android/desktop Chrome hand us a real
+    // install prompt (beforeinstallprompt); iOS Safari has no API, so
+    // the chip explains Share -> Add to Home Screen instead. Either
+    // way it shows once per dismissal and never inside the installed
+    // app itself.
+    (() => {
+      const chip = document.getElementById('install');
+      const standalone = matchMedia('(display-mode: standalone)').matches
+        || navigator.standalone === true;
+      if (standalone || localStorage.getItem('oj_install_dismissed')) return;
+      const dismiss = () => {
+        chip.style.display = 'none';
+        localStorage.setItem('oj_install_dismissed', '1');
+      };
+      let deferred = null;
+      addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferred = e;
+        chip.innerHTML = '<b>INSTALL</b> ORBIT JUMPER ON THIS DEVICE<span class="x">[×]</span>';
+        chip.style.display = 'flex';
+      });
+      const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      if (ios) {
+        chip.innerHTML = 'INSTALL: TAP <b>SHARE</b> → <b>ADD TO HOME SCREEN</b><span class="x">[×]</span>';
+        chip.style.display = 'flex';
+        setTimeout(() => { if (chip.style.display !== 'none') chip.style.display = 'none'; }, 15000);
+      }
+      chip.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('x') || !deferred) { dismiss(); return; }
+        deferred.prompt();
+        const { outcome } = await deferred.userChoice;
+        if (outcome === 'accepted') dismiss(); else chip.style.display = 'none';
+        deferred = null;
+      });
+      addEventListener('appinstalled', dismiss);
+    })();
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  </script>
   <script>
     // Render at CSS resolution, not native DPR. Two reasons, both load-
     // bearing: the XAML UI double-applies scale factors above DPR 1
@@ -85,18 +141,25 @@
         Wrapped.prototype = Orig.prototype;
         window[name] = Wrapped;
       }
-      const events = ['pointerdown', 'touchend', 'mousedown', 'keydown', 'click'];
+      // The listeners stay armed FOREVER. Phones re-suspend the context
+      // long after the first unlock — tab switch, screen lock, a call,
+      // iOS's 'interrupted' state — and a disarmed unlock means "sound
+      // works for a bit, then stops for the rest of the session".
       const resume = () => {
-        let allRunning = ctxs.length > 0;
         for (const c of ctxs) {
-          if (c.state === 'suspended') c.resume();
-          if (c.state !== 'running') allRunning = false;
-        }
-        if (allRunning) {
-          for (const ev of events) removeEventListener(ev, resume, true);
+          if (c.state !== 'running') c.resume().catch(() => {});
         }
       };
-      for (const ev of events) addEventListener(ev, resume, true);
+      for (const ev of ['pointerdown', 'touchend', 'mousedown', 'keydown', 'click']) {
+        addEventListener(ev, resume, true);
+      }
+      // Coming back to the tab/app is not a gesture, but by then the
+      // page has sticky activation, so resume() is allowed — take it.
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) resume();
+      });
+      addEventListener('focus', resume);
+      addEventListener('pageshow', resume);
     })();
   </script>
   <script type="module">

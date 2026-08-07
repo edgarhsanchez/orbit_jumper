@@ -22,3 +22,6 @@ meshlet = ["bevy/meshlet"]
 
 [dev-dependencies]
 rodio = { version = "0.22", default-features = false, features = ["vorbis"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Storage"] }

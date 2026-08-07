@@ -16,7 +16,7 @@ mkdir -p web/dist
 wasm-bindgen --target web --no-typescript \
   --out-dir web/dist --out-name oj_game \
   "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/oj_game.wasm"
-cp web/index.html web/dist/
+cp web/index.html web/manifest.json web/sw.js web/icon-192.png web/icon-512.png web/icon-maskable-512.png web/apple-touch-icon.png web/dist/
 if command -v wasm-opt >/dev/null; then
   wasm-opt -Oz --strip-debug --strip-producers -all \
     -o web/dist/oj_game_bg.wasm web/dist/oj_game_bg.wasm

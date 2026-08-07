@@ -121,27 +121,24 @@ pub struct Loadout {
     pub stash: Vec<(Element, u32)>,
 }
 
-fn loadout_path() -> std::path::PathBuf {
-    std::path::PathBuf::from("orbit_jumper_loadout.ron")
-}
-
 impl Loadout {
     pub fn load() -> Self {
-        std::fs::read_to_string(loadout_path())
-            .ok()
+        // Through the storage seam so the web build persists too
+        // (localStorage); native keeps the same file as before.
+        crate::storage::load("loadout")
             .and_then(|s| ron::from_str(&s).ok())
             .unwrap_or_default()
     }
 }
 
-/// Write the current gear + stash to disk (no-op where there is no fs).
+/// Write the current gear + stash wherever the platform persists.
 pub fn save_loadout(upgrades: &ShipUpgrades, stash: &Stash) {
     let loadout = Loadout {
         tiers: upgrades.tiers.iter().map(|(k, v)| (*k, *v)).collect(),
         stash: stash.0.iter().map(|(k, v)| (*k, *v)).collect(),
     };
     if let Ok(text) = ron::to_string(&loadout) {
-        let _ = std::fs::write(loadout_path(), text);
+        crate::storage::save("loadout", &text);
     }
 }
 

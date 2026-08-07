@@ -21,8 +21,10 @@ mod audio;
 mod comets;
 mod command;
 mod modules;
+mod save;
 mod fx;
 mod sim;
+mod storage;
 mod solar;
 mod stick;
 mod travel;
@@ -66,6 +68,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(PfUiPlugin)
+        .add_plugins(save::SavePlugin)
         .add_plugins((sim::SimPlugin, ui::HudPlugin))
         .add_plugins((modules::StudyPlugin, modules::ScorePlugin, modules::SalvagePlugin))
         .add_plugins((bevy::picking::mesh_picking::MeshPickingPlugin, command::CommandPlugin))

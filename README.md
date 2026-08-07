@@ -65,6 +65,19 @@ is radial), chamfered console buttons with press feedback, and tap-to-lock
 targeting. Portrait and landscape are distinct layouts, relaid live on
 rotation.
 
+**Install it like an app.** The web build is a PWA: on Android/desktop
+Chrome an **INSTALL** chip appears (or use the browser menu's *Add to Home
+Screen*); on iOS tap **Share → Add to Home Screen**. You get a home-screen
+icon and fullscreen standalone play, with the last-loaded build cached for
+shaky connections.
+
+**And your run survives.** The game autosaves every few seconds — system,
+position, velocity, vitals, score, rank — and the next launch resumes
+exactly there, on desktop (a save file) and in the browser (localStorage,
+so the installed app keeps your progress too). Gear, stash and career
+records persist the same way. Death is the one exit that doesn't come
+back: rank is per-run, and the save dies with the hull.
+
 <details>
 <summary><strong>Controls reference</strong></summary>
 
