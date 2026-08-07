@@ -19,3 +19,6 @@ ron = { workspace = true }
 # Virtual geometry for massive object counts; desktop Vulkan/DX12/Metal
 # class GPUs only, so it is opt-in and the standard path stays the default.
 meshlet = ["bevy/meshlet"]
+
+[dev-dependencies]
+rodio = { version = "0.22", default-features = false, features = ["vorbis"] }

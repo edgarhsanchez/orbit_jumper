@@ -72,13 +72,25 @@ struct SoundBank {
 #[derive(Component)]
 struct EngineHum;
 
+/// A track that must play forever. rodio 0.22's `repeat_infinite` DIES
+/// at the loop seam on our vorbis streams (pinned by the test below:
+/// "source ended inside pass 1") — in the shipped game the space drone
+/// played once and went silent ~62 s in. So loops are self-hosted:
+/// each track plays as a one-shot and is respawned the moment its sink
+/// drains. The tracks carry a crossfaded loop head, which doubles as a
+/// graceful mask for the one-frame seam.
+#[derive(Component)]
+struct LoopTrack {
+    source: Handle<AudioSource>,
+}
+
 pub struct GameAudioPlugin;
 
 impl Plugin for GameAudioPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<Sfx>()
             .add_systems(Startup, setup_audio)
-            .add_systems(Update, (play_sfx, drive_engine_hum));
+            .add_systems(Update, (play_sfx, drive_engine_hum, keep_loops_alive));
     }
 }
 
@@ -89,16 +101,21 @@ fn setup_audio(
     let mut add = |bytes: &'static [u8]| {
         sources.add(AudioSource { bytes: bytes.into() })
     };
-    // The vastness: always on, under everything.
+    // The vastness: always on, under everything. ONCE, not LOOP — the
+    // LoopTrack respawn owns eternity (see LoopTrack for why).
+    let drone = add(DRONE_OGG);
     commands.spawn((
-        AudioPlayer::new(add(DRONE_OGG)),
-        PlaybackSettings::LOOP.with_volume(Volume::Linear(0.55)),
+        LoopTrack { source: drone.clone() },
+        AudioPlayer::new(drone),
+        PlaybackSettings::ONCE.with_volume(Volume::Linear(0.55)),
     ));
-    // The engine: looping already, silent until a burn fades it up.
+    // The engine: same self-hosted loop, silent until a burn fades it up.
+    let engine = add(ENGINE_OGG);
     commands.spawn((
         EngineHum,
-        AudioPlayer::new(add(ENGINE_OGG)),
-        PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0)),
+        LoopTrack { source: engine.clone() },
+        AudioPlayer::new(engine),
+        PlaybackSettings::ONCE.with_volume(Volume::Linear(0.0)),
     ));
     let sfx = [
         (Sfx::Laser, LASER_OGG),
@@ -116,6 +133,30 @@ fn setup_audio(
     .map(|(k, bytes)| (k, add(bytes)))
     .collect();
     commands.insert_resource(SoundBank { sfx });
+}
+
+/// The self-hosted loop: the moment a LoopTrack's sink drains, respawn
+/// the same source at the same volume. One frame of seam, masked by the
+/// tracks' crossfaded loop heads.
+fn keep_loops_alive(
+    tracks: Query<(Entity, &LoopTrack, Option<&EngineHum>, &AudioSink)>,
+    mut commands: Commands,
+) {
+    for (entity, track, hum, sink) in &tracks {
+        if !sink.empty() {
+            continue;
+        }
+        let volume = sink.volume();
+        commands.entity(entity).despawn();
+        let mut fresh = commands.spawn((
+            LoopTrack { source: track.source.clone() },
+            AudioPlayer::new(track.source.clone()),
+            PlaybackSettings::ONCE.with_volume(volume),
+        ));
+        if hum.is_some() {
+            fresh.insert(EngineHum);
+        }
+    }
 }
 
 /// Fire every requested one-shot, capped per frame so a ten-kill volley
@@ -137,6 +178,68 @@ fn play_sfx(
                 AudioPlayer::new(handle.clone()),
                 PlaybackSettings::DESPAWN.with_volume(Volume::Linear(sfx.volume())),
             ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The looping tracks must decode as full, audible passes — the
+    /// LoopTrack respawn replays them end to end, so a truncated or
+    /// silent decode would be a silent game. (rodio's `repeat_infinite`
+    /// is deliberately NOT under test: it ends after one pass on these
+    /// vorbis streams — "source ended inside pass 1" — which is exactly
+    /// the went-silent-after-a-minute bug the respawn loop replaced it
+    /// over.)
+    #[test]
+    fn loop_tracks_decode_full_audible_passes() {
+        use rodio::Source;
+        for (name, bytes, min_secs) in
+            [("drone", DRONE_OGG, 60.0f64), ("engine", ENGINE_OGG, 1.5)]
+        {
+            let cursor = std::io::Cursor::new(bytes);
+            let decoder = rodio::Decoder::new(cursor)
+                .unwrap_or_else(|e| panic!("{name} failed to decode: {e}"));
+            let channels = decoder.channels().get() as f64;
+            let rate = decoder.sample_rate().get() as f64;
+            let mut n = 0u64;
+            let mut energy = 0.0f64;
+            for s in decoder {
+                n += 1;
+                energy += (s as f64).abs();
+            }
+            let secs = n as f64 / (channels * rate);
+            assert!(secs > min_secs, "{name} pass is only {secs:.1}s");
+            let mean = energy / n as f64;
+            assert!(mean > 0.005, "{name} decodes silent (mean |sample| {mean:.6})");
+        }
+    }
+
+    /// Every embedded one-shot must decode — a corrupt ogg would panic
+    /// rodio at spawn time in the shipped game.
+    #[test]
+    fn every_embedded_sound_decodes() {
+        for (name, bytes) in [
+            ("drone", DRONE_OGG),
+            ("engine", ENGINE_OGG),
+            ("laser", LASER_OGG),
+            ("missile", MISSILE_OGG),
+            ("explosion", EXPLOSION_OGG),
+            ("shield", SHIELD_OGG),
+            ("hull", HULL_OGG),
+            ("click", CLICK_OGG),
+            ("orbit", ORBIT_OGG),
+            ("salvage", SALVAGE_OGG),
+            ("solar", SOLAR_OGG),
+            ("warning", WARNING_OGG),
+        ] {
+            let cursor = std::io::Cursor::new(bytes);
+            let decoder = rodio::Decoder::new(cursor)
+                .unwrap_or_else(|e| panic!("{name} failed to decode: {e}"));
+            let n = decoder.count();
+            assert!(n > 400, "{name} decoded only {n} samples");
         }
     }
 }
