@@ -194,6 +194,69 @@ pub struct Wreck {
     pub element: Element,
 }
 
+/// Debris tumbles: a slow per-piece rotation so facets sweep the
+/// sunlight and the sun-facing side glints. The render sync writes only
+/// translation, so this rotation survives the camera-relative frame.
+#[derive(Component)]
+pub struct Tumble {
+    pub axis: Vec3,
+    /// Radians per second of real time.
+    pub rate: f32,
+}
+
+impl Tumble {
+    /// Deterministic tumble from any handy seed — spawn index, rng draw.
+    pub fn seeded(k: u64) -> Self {
+        let mut r = oj_universe::SplitMix64(k ^ 0x7D3B_C0DE);
+        let axis = Vec3::new(
+            r.range(-1.0, 1.0) as f32,
+            r.range(-1.0, 1.0) as f32,
+            r.range(-1.0, 1.0) as f32,
+        )
+        .try_normalize()
+        .unwrap_or(Vec3::Z);
+        Self { axis, rate: r.range(0.3, 1.4) as f32 }
+    }
+}
+
+fn tumble_debris(time: Res<Time>, mut pieces: Query<(&Tumble, &mut Transform)>) {
+    for (tumble, mut transform) in &mut pieces {
+        transform.rotate(Quat::from_axis_angle(tumble.axis, tumble.rate * time.delta_secs()));
+    }
+}
+
+/// The sun-catching surface for a debris element. Structural metals are
+/// bare metal (bright specular on the sun side, dark on the night side),
+/// ice is glass-gloss, and the exotics keep a faint glow of their own —
+/// but every piece reads its lighting from the nearest sun's point
+/// light, so the shine always faces the sun.
+pub fn debris_material(element: Element) -> StandardMaterial {
+    // Metallic stays below 1: a pure mirror only flashes at glint
+    // angles, while some diffuse keeps the sun-facing face readably lit
+    // through the whole tumble — the shine should track the sun, not
+    // the camera.
+    let (base, metallic, roughness, emissive) = match element {
+        Element::Iron => (Color::srgb(0.60, 0.58, 0.55), 0.75, 0.42, LinearRgba::BLACK),
+        Element::Titanium => (Color::srgb(0.72, 0.74, 0.78), 0.75, 0.30, LinearRgba::BLACK),
+        Element::Silicon => (Color::srgb(0.42, 0.52, 0.66), 0.4, 0.25, LinearRgba::BLACK),
+        Element::Carbon => (Color::srgb(0.24, 0.24, 0.26), 0.3, 0.5, LinearRgba::BLACK),
+        Element::Ice => (Color::srgb(0.78, 0.90, 1.0), 0.0, 0.08, LinearRgba::BLACK),
+        Element::Uranium => {
+            (Color::srgb(0.48, 0.74, 0.48), 0.6, 0.35, LinearRgba::rgb(0.03, 0.10, 0.03))
+        }
+        Element::Aetherite => {
+            (Color::srgb(0.66, 0.54, 0.90), 0.7, 0.20, LinearRgba::rgb(0.08, 0.04, 0.14))
+        }
+    };
+    StandardMaterial {
+        base_color: base,
+        metallic,
+        perceptual_roughness: roughness,
+        emissive,
+        ..default()
+    }
+}
+
 /// The vessel's hold: collected elements, ready for crafting.
 #[derive(Resource, Default)]
 pub struct Stash(pub HashMap<Element, u32>);
@@ -226,7 +289,7 @@ impl Plugin for SalvagePlugin {
                 FixedUpdate,
                 (detect_death, spawn_wrecks, magnet_wrecks, collect_wrecks, respawn).chain(),
             )
-            .add_systems(Update, dev_hull);
+            .add_systems(Update, (dev_hull, dev_wrecks, tumble_debris));
     }
 }
 
@@ -281,10 +344,6 @@ fn spawn_wrecks(
         );
         // The lost ship becomes claimable scrap, scattered near the wreck.
         let mesh = meshes.add(Cuboid::new(4.0, 4.0, 4.0).mesh());
-        let mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.5, 0.45, 0.4),
-            ..default()
-        });
         for i in 0..5 {
             let offset = Vec3d::new(
                 (i as f64 - 2.0) * 1.5e8,
@@ -293,9 +352,11 @@ fn spawn_wrecks(
             );
             // A dead hull scraps into structural metals.
             let element = if i % 2 == 0 { Element::Iron } else { Element::Titanium };
+            let mat = materials.add(debris_material(element));
             commands.spawn((
                 SystemScoped,
                 Wreck { value: 20, element },
+                Tumble::seeded(i as u64),
                 SimPos(death.at + offset),
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(mat.clone()),
@@ -361,6 +422,91 @@ fn dev_hull(mut done: Local<bool>, mut ships: Query<&mut Ship>) {
         ship.shield = 0.0;
         *done = true;
     }
+}
+
+/// Dev hook: OJ_WRECKS=N parks N debris pieces in a ring around the
+/// ship at 6e9 m — outside the magnet, cycling every element — so the
+/// sun-facing shine can be inspected without a combat session. Once,
+/// first ship only; no-op in normal runs.
+#[allow(clippy::too_many_arguments)]
+fn dev_wrecks(
+    mut done: Local<bool>,
+    ships: Query<&SimPos, With<Ship>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if *done {
+        return;
+    }
+    let Ok(n) = std::env::var("OJ_WRECKS").map(|v| v.parse::<u32>().unwrap_or(0)) else {
+        *done = true;
+        return;
+    };
+    let Ok(ship_pos) = ships.single() else { return };
+    let elements = [
+        Element::Iron,
+        Element::Titanium,
+        Element::Silicon,
+        Element::Carbon,
+        Element::Ice,
+        Element::Uranium,
+        Element::Aetherite,
+    ];
+    // OJ_LIGHT=1: also park a strong point light at the render origin
+    // (the ship) — the control experiment for "is the sun light dead":
+    // if this lights the ring radially, point lights work here and the
+    // sun's own light is what's failing.
+    if let Ok(range) = std::env::var("OJ_LIGHT").map(|v| v.parse::<f32>().unwrap_or(5.0e3)) {
+        commands.spawn((
+            SystemScoped,
+            PointLight {
+                intensity: 1.0e9,
+                range,
+                shadow_maps_enabled: false,
+                ..default()
+            },
+            Transform::default(),
+        ));
+    }
+    // OJ_LIGHT_SUN=1: a bare light synced to the sun's exact position
+    // (SimPos zero) at the sun's intensity — isolates "the sun entity"
+    // from "the sun's location" as the reason its light never lands.
+    if std::env::var("OJ_LIGHT_SUN").is_ok() {
+        commands.spawn((
+            SystemScoped,
+            PointLight {
+                intensity: 3.0e15,
+                range: 2.0e6,
+                shadow_maps_enabled: false,
+                ..default()
+            },
+            SimPos(Vec3d::ZERO),
+            Transform::default(),
+        ));
+    }
+    let cuboid = meshes.add(Cuboid::new(4.0, 4.0, 4.0).mesh());
+    // Alternate cuboids with spheres: the cuboids are the real debris
+    // shape, the spheres are light-direction instruments — a sphere's
+    // bright hemisphere points at the sun with no facet noise.
+    let sphere = meshes.add(Sphere::new(2.5).mesh().ico(3).unwrap());
+    for i in 0..n {
+        let angle = std::f64::consts::TAU * i as f64 / n as f64;
+        let element = elements[i as usize % elements.len()];
+        let mesh = if i % 2 == 0 { cuboid.clone() } else { sphere.clone() };
+        commands.spawn((
+            SystemScoped,
+            Wreck { value: 1, element },
+            Tumble::seeded(i as u64),
+            SimPos(ship_pos.0 + Vec3d::new(angle.cos(), angle.sin(), 0.0) * 6.0e9),
+            Mesh3d(mesh),
+            MeshMaterial3d(materials.add(debris_material(element))),
+            // Oversized on purpose: this ring exists to eyeball the
+            // sun-facing shine, and facets need pixels to read.
+            Transform::from_scale(Vec3::splat(5.0)),
+        ));
+    }
+    *done = true;
 }
 
 const COLLECT_RADIUS: f64 = 5.0e8;

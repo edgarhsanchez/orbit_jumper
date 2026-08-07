@@ -436,16 +436,32 @@ pub fn spawn_bodies(
             (system.sun.radius % 97.0e7) as f32 / 97.0e7,
             1.0,
         ))),
+        Transform::default(),
+    )).id();
+    // The sun's light rides its OWN mesh-less entity, synced to the same
+    // SimPos. On the sun entity the light was silently culled whenever
+    // the sun's mesh left the frustum (one entity, one ViewVisibility,
+    // computed from the mesh AABB) — i.e. almost always in tactical
+    // view, so nothing in the system ever showed a day side. A bare
+    // light entity is visibility-tested on its range sphere instead.
+    commands.spawn((
+        SystemScoped,
         PointLight {
             color: Color::srgb(1.0, 0.95, 0.85),
+            // Bright enough to out-shine the ambient at gameplay orbit
+            // distances (tens of thousands of render units), so debris,
+            // ships and planets read a real day side facing the sun —
+            // without clipping small pieces to white at default exposure.
             intensity: 3.0e13,
             range: 2.0e6,
             radius: 200.0,
             shadow_maps_enabled: false,
             ..default()
         },
+        SimPos(Vec3d::ZERO),
+        BodyVel::default(),
         Transform::default(),
-    )).id();
+    ));
     let heat = sun_heat(system.sun.class);
     let seed = (system.sun.radius % 97.0e7) as f32 / 97.0e7;
     let shell_mesh = meshes.add(Sphere::new(200.0).mesh().ico(4).unwrap());
@@ -482,10 +498,6 @@ pub fn spawn_bodies(
         ..default()
     });
     let debris_mesh = meshes.add(Cuboid::new(3.0, 2.0, 2.5).mesh());
-    let debris_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.4, 0.38, 0.35),
-        ..default()
-    });
     let mut debris_rng = oj_universe::SplitMix64(
         0xDEB215
             ^ (system.id.index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
@@ -583,17 +595,18 @@ pub fn spawn_bodies(
                     },
                     parent: planet_entity,
                 },
-                crate::modules::Wreck {
-                    value: 5,
-                    element: {
-                        let opts = oj_materials::Element::from_profile(planet.resources);
-                        opts[(debris_rng.next_u64() % opts.len() as u64) as usize]
-                    },
+                {
+                    let opts = oj_materials::Element::from_profile(planet.resources);
+                    let element = opts[(debris_rng.next_u64() % opts.len() as u64) as usize];
+                    (
+                        crate::modules::Wreck { value: 5, element },
+                        MeshMaterial3d(materials.add(crate::modules::debris_material(element))),
+                    )
                 },
+                crate::modules::Tumble::seeded(debris_rng.next_u64()),
                 SimPos::default(),
                 BodyVel::default(),
                 Mesh3d(debris_mesh.clone()),
-                MeshMaterial3d(debris_mat.clone()),
                 Transform::default(),
             ));
         }

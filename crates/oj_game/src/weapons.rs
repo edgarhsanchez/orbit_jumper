@@ -532,27 +532,22 @@ fn reap_hulls(
         );
         commands.entity(entity).despawn();
         let mesh = meshes.add(Cuboid::new(3.0, 3.0, 3.0).mesh());
-        let mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.55, 0.5, 0.45),
-            ..default()
-        });
         // Bountied hulls (raiders) scrap into exotics; drones into basics.
         let value = bounty.map_or(15, |b| b.0 / 2);
         for i in 0..2 {
+            let element = match (bounty.is_some(), i) {
+                (true, 0) => oj_materials::Element::Aetherite,
+                (true, _) => oj_materials::Element::Titanium,
+                (false, 0) => oj_materials::Element::Silicon,
+                (false, _) => oj_materials::Element::Iron,
+            };
             commands.spawn((
                 SystemScoped,
-                Wreck {
-                    value,
-                    element: match (bounty.is_some(), i) {
-                        (true, 0) => oj_materials::Element::Aetherite,
-                        (true, _) => oj_materials::Element::Titanium,
-                        (false, 0) => oj_materials::Element::Silicon,
-                        (false, _) => oj_materials::Element::Iron,
-                    },
-                },
+                Wreck { value, element },
+                crate::modules::Tumble::seeded(entity.to_bits() ^ i as u64),
                 SimPos(pos.0 + Vec3d::new(1.0e8 * (i as f64 - 0.5), 5.0e7, 0.0)),
                 Mesh3d(mesh.clone()),
-                MeshMaterial3d(mat.clone()),
+                MeshMaterial3d(materials.add(crate::modules::debris_material(element))),
                 Transform::default(),
             ));
         }

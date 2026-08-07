@@ -106,13 +106,13 @@ fn shed_tails(
                     SystemScoped,
                     Wreck { value: 8, element: oj_materials::Element::Ice },
                     CometChunk { ttl: 60.0 },
+                    crate::modules::Tumble::seeded(rng.next_u64()),
                     SimPos(pos.0),
                     Mesh3d(meshes.add(Cuboid::new(2.5, 2.0, 2.2).mesh())),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.75, 0.85, 0.95),
-                        perceptual_roughness: 0.4,
-                        ..default()
-                    })),
+                    MeshMaterial3d(
+                        materials
+                            .add(crate::modules::debris_material(oj_materials::Element::Ice)),
+                    ),
                     Transform::default(),
                 ));
             }
