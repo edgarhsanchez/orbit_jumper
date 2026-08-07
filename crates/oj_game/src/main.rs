@@ -31,6 +31,17 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "orbit jumper".into(),
+                // OJ_WIN=390x844 boots at phone dimensions — the dev hook
+                // behind the responsive-layout tests. Resizing the window
+                // relayouts live either way.
+                resolution: std::env::var("OJ_WIN")
+                    .ok()
+                    .and_then(|s| {
+                        let (w, h) = s.split_once('x')?;
+                        Some((w.parse().ok()?, h.parse().ok()?))
+                    })
+                    .map(|(w, h): (f32, f32)| bevy::window::WindowResolution::new(w as u32, h as u32))
+                    .unwrap_or_default(),
                 ..default()
             }),
             ..default()

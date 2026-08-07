@@ -95,8 +95,65 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_hud, toggle_panel, log_commands));
+        app.init_resource::<UiLayoutState>()
+            .add_systems(Startup, init_model)
+            .add_systems(Update, (update_hud, toggle_panel, log_commands))
+            .add_systems(Update, relayout_ui)
+            // The touch-key bridge must run AFTER bevy's per-frame input
+            // clear and AFTER UI focus computes Interaction, or the
+            // just_pressed edge is wiped before any consumer (FixedUpdate
+            // weapons, Update toggles) can see it.
+            .add_systems(
+                PreUpdate,
+                sync_touch_keys.after(bevy::ui::UiSystems::Focus),
+            );
+    }
+}
+
+/// Which layout the UI is currently built for. Phone = the window's short
+/// side is phone-sized; portrait vs landscape picks the arrangement.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UiMode {
+    Desktop,
+    PhonePortrait,
+    PhoneLandscape,
+}
+
+impl UiMode {
+    fn of(width: f32, height: f32) -> Self {
+        if width.min(height) < 500.0 {
+            if height > width { Self::PhonePortrait } else { Self::PhoneLandscape }
+        } else {
+            Self::Desktop
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+struct UiLayoutState(Option<UiMode>);
+
+/// Marks every UI document root so a relayout can tear the set down.
+#[derive(Component)]
+struct UiRoot;
+
+/// An on-screen control that presses/releases a key while touched — the
+/// bridge that lets every keyboard-driven game system work on a phone
+/// without knowing touch exists.
+#[derive(Component)]
+struct TouchKey(KeyCode);
+
+/// Drive `ButtonInput<KeyCode>` from on-screen control state. Transition
+/// edges only, so `just_pressed` semantics (panel toggles, missile
+/// triggers) behave exactly like a physical key tap.
+fn sync_touch_keys(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    controls: Query<(&Interaction, &TouchKey), Changed<Interaction>>,
+) {
+    for (interaction, key) in &controls {
+        match interaction {
+            Interaction::Pressed => keys.press(key.0),
+            _ => keys.release(key.0),
+        }
     }
 }
 
@@ -226,12 +283,12 @@ const HUD_XAML: &str = r##"
 const PANEL_XAML: &str = r##"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="340,12,0,0"
+        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="@PM"
         Background="#F00D131C" BorderBrush="#1E3A44" BorderThickness="1"
-        Padding="12,10" Width="330">
+        Padding="12,10" Width="@PW">
   <StackPanel>
     <TextBlock Text="VESSEL" Foreground="#00E5FF" FontSize="14"/>
-    <Rectangle Width="304" Height="1" Fill="#00E5FF" Margin="0,5,0,8"/>
+    <Rectangle Width="@PS" Height="1" Fill="#00E5FF" Margin="0,5,0,8"/>
 
     <ItemsControl ItemsSource="{Binding rows}">
       <ItemsControl.ItemTemplate>
@@ -280,7 +337,7 @@ const PANEL_XAML: &str = r##"
       </ItemsControl.ItemTemplate>
     </ItemsControl>
 
-    <Rectangle Width="304" Height="1" Fill="#22313C" Margin="0,12,0,6"/>
+    <Rectangle Width="@PS" Height="1" Fill="#22313C" Margin="0,12,0,6"/>
     <ItemsControl ItemsSource="{Binding feed}">
       <ItemsControl.ItemTemplate>
         <DataTemplate>
@@ -296,37 +353,37 @@ const PANEL_XAML: &str = r##"
 const MAP_XAML: &str = r##"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="340,12,0,0"
+        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="@MM"
         Background="#F00D131C" BorderBrush="#1E3A44" BorderThickness="1"
-        Padding="12,10" Width="470">
+        Padding="12,10" Width="@MW">
   <StackPanel>
     <StackPanel Orientation="Horizontal">
-      <TextBlock Text="GALAXY MAP" Foreground="#00E5FF" FontSize="14" Width="170"/>
+      <TextBlock Text="GALAXY MAP" Foreground="#00E5FF" FontSize="14" Width="150"/>
       <TextBlock Text="{Binding map_status}" Foreground="#5A6472" FontSize="10" Margin="0,4,0,0"/>
     </StackPanel>
-    <Rectangle Width="444" Height="1" Fill="#00E5FF" Margin="0,5,0,6"/>
+    <Rectangle Width="@MS" Height="1" Fill="#00E5FF" Margin="0,5,0,6"/>
 
     <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
-      <TextBlock Text="DESTINATION" Foreground="#5A6472" FontSize="10" Width="190"/>
-      <TextBlock Text="DIST (LY)" Foreground="#5A6472" FontSize="10" Width="90"/>
-      <TextBlock Text="COST (E)" Foreground="#5A6472" FontSize="10" Width="90"/>
+      <TextBlock Text="DESTINATION" Foreground="#5A6472" FontSize="10" Width="@C1"/>
+      <TextBlock Text="DIST" Foreground="#5A6472" FontSize="10" Width="@C2"/>
+      <TextBlock Text="COST" Foreground="#5A6472" FontSize="10" Width="@C3"/>
       <TextBlock Text="ACTION" Foreground="#5A6472" FontSize="10"/>
     </StackPanel>
-    <Rectangle Width="444" Height="1" Fill="#22313C"/>
+    <Rectangle Width="@MS" Height="1" Fill="#22313C"/>
 
     <ItemsControl ItemsSource="{Binding map}">
       <ItemsControl.ItemTemplate>
         <DataTemplate>
           <StackPanel Margin="0,0,0,0">
             <StackPanel Orientation="Horizontal" Margin="0,6,0,6">
-              <TextBlock Text="{Binding name}" Foreground="{Binding color}" FontSize="11" Width="190"/>
-              <TextBlock Text="{Binding dist}" Foreground="#E0E2EB" FontSize="11" Width="90"/>
-              <TextBlock Text="{Binding cost}" Foreground="#FFB454" FontSize="11" Width="90"/>
+              <TextBlock Text="{Binding name}" Foreground="{Binding color}" FontSize="11" Width="@C1"/>
+              <TextBlock Text="{Binding dist}" Foreground="#E0E2EB" FontSize="11" Width="@C2"/>
+              <TextBlock Text="{Binding cost}" Foreground="#FFB454" FontSize="11" Width="@C3"/>
               <Button Content="JUMP" Command="{Binding jump}" CommandParameter="{Binding param}"
                       Background="#0B1B22" BorderBrush="#00E5FF" Foreground="#00E5FF"
                       FontSize="10" Padding="9,2"/>
             </StackPanel>
-            <Rectangle Width="444" Height="1" Fill="#1A2530"/>
+            <Rectangle Width="@MS" Height="1" Fill="#1A2530"/>
           </StackPanel>
         </DataTemplate>
       </ItemsControl.ItemTemplate>
@@ -337,6 +394,75 @@ const MAP_XAML: &str = r##"
   </StackPanel>
 </Border>
 "##;
+
+// Touch controls: chunky targets, same glass language. Buttons press
+// virtual keys (TouchKey), so game systems stay input-agnostic.
+const TOUCH_TOPBAR_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0"
+            Orientation="Horizontal">
+  <Button x:Name="btn_vessel" Content="VESSEL" Background="#D80B1B22" BorderBrush="#00E5FF"
+          Foreground="#00E5FF" FontSize="12" Padding="12,10" Margin="0,0,6,0"/>
+  <Button x:Name="btn_map" Content="MAP" Background="#D80B1B22" BorderBrush="#00E5FF"
+          Foreground="#00E5FF" FontSize="12" Padding="12,10" Margin="0,0,6,0"/>
+  <Button x:Name="btn_study" Content="STUDY" Background="#D80B1B22" BorderBrush="#FFB454"
+          Foreground="#FFB454" FontSize="12" Padding="12,10"/>
+</StackPanel>
+"##;
+
+const TOUCH_THRUST_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="@TM">
+  <StackPanel Orientation="Horizontal">
+    <Button x:Name="btn_up" Content="PRO" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
+            Foreground="#00FFD4" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
+    <Button x:Name="btn_down" Content="RET" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
+            Foreground="#00FFD4" FontSize="13" Padding="0,14"/>
+  </StackPanel>
+  <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_left" Content="IN" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
+            Foreground="#00FFD4" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
+    <Button x:Name="btn_right" Content="OUT" Width="66" Background="#D80B1B22" BorderBrush="#00FFD4"
+            Foreground="#00FFD4" FontSize="13" Padding="0,14"/>
+  </StackPanel>
+</StackPanel>
+"##;
+
+const TOUCH_WEAPONS_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,8,8">
+  <StackPanel Orientation="Horizontal">
+    <Button x:Name="btn_las" Content="LAS" Width="66" Background="#D80B1B22" BorderBrush="#FF7043"
+            Foreground="#FF7043" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
+    <Button x:Name="btn_msl" Content="MSL" Width="66" Background="#D80B1B22" BorderBrush="#FF7043"
+            Foreground="#FF7043" FontSize="13" Padding="0,14"/>
+  </StackPanel>
+  <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_pull" Content="PULL" Width="66" Background="#D80B1B22" BorderBrush="#B48CFF"
+            Foreground="#B48CFF" FontSize="13" Padding="0,14" Margin="0,0,6,0"/>
+    <Button x:Name="btn_push" Content="PUSH" Width="66" Background="#D80B1B22" BorderBrush="#B48CFF"
+            Foreground="#B48CFF" FontSize="13" Padding="0,14"/>
+  </StackPanel>
+</StackPanel>
+"##;
+
+/// btn_* name -> virtual key, for wiring TouchKey after instantiation.
+const TOUCH_KEYS: [(&str, KeyCode); 11] = [
+    ("btn_vessel", KeyCode::Tab),
+    ("btn_map", KeyCode::KeyM),
+    ("btn_study", KeyCode::KeyS),
+    ("btn_up", KeyCode::ArrowUp),
+    ("btn_down", KeyCode::ArrowDown),
+    ("btn_left", KeyCode::ArrowLeft),
+    ("btn_right", KeyCode::ArrowRight),
+    ("btn_las", KeyCode::KeyZ),
+    ("btn_msl", KeyCode::KeyX),
+    ("btn_pull", KeyCode::KeyC),
+    ("btn_push", KeyCode::KeyV),
+];
 
 /// Root entity of the vessel panel, for the Tab toggle.
 #[derive(Resource)]
@@ -356,7 +482,7 @@ const CRAFT_SLOTS: [(UpgradeSlot, &str, &str); 5] = [
     (UpgradeSlot::GravityDrive, "GRAVITY DRIVE", "#FF4FD8"),
 ];
 
-fn spawn_hud(mut commands: Commands) {
+fn init_model(mut commands: Commands) {
     let vm = Bindable::new(HudVm::default());
     // The vessel panel's craft buttons pass their row index.
     vm.on_command("craft", |world, param| {
@@ -377,45 +503,157 @@ fn spawn_hud(mut commands: Commands) {
             world.resource_mut::<crate::travel::PendingJump>().0 = Some(target);
         }
     });
-    commands.insert_resource(HudModel(vm.clone()));
-    commands.queue(move |world: &mut World| {
-        enum Panel {
-            Hud,
-            Vessel,
-            Map,
-        }
-        for (xaml, panel) in [
-            (HUD_XAML, Panel::Hud),
-            (PANEL_XAML, Panel::Vessel),
-            (MAP_XAML, Panel::Map),
-        ] {
-            let scene = bevy_pf::XamlScene::parse(xaml).expect("ui xaml is valid");
-            let root = world.spawn(DataContext(vm.clone())).id();
-            if let Err(e) = bevy_pf::instantiate_document(world, root, &scene.document()) {
-                error!("ui failed to instantiate: {e}");
+    commands.insert_resource(HudModel(vm));
+}
+
+/// Per-mode sizing substituted into the XAML templates.
+struct Metrics {
+    panel_margin: String,
+    panel_w: i32,
+    map_margin: String,
+    map_w: i32,
+    /// Map columns: destination / dist / cost.
+    cols: (i32, i32, i32),
+    touch_controls: bool,
+    /// Bottom-left thrust cluster margin (clears the HUD in landscape).
+    thrust_margin: String,
+}
+
+impl Metrics {
+    fn for_mode(mode: UiMode, win_w: f32) -> Self {
+        match mode {
+            UiMode::Desktop => Self {
+                panel_margin: "340,12,0,0".into(),
+                panel_w: 330,
+                map_margin: "340,12,0,0".into(),
+                map_w: 470,
+                cols: (190, 90, 90),
+                touch_controls: false,
+                thrust_margin: "8,0,0,8".into(),
+            },
+            // Landscape phone: desktop arrangement (it fits), plus touch
+            // controls in the corners.
+            UiMode::PhoneLandscape => Self {
+                touch_controls: true,
+                thrust_margin: "260,0,0,8".into(),
+                ..Self::for_mode(UiMode::Desktop, win_w)
+            },
+            // Portrait: panels become near-full-width overlays with
+            // compressed map columns; controls on.
+            UiMode::PhonePortrait => {
+                let w = (win_w as i32 - 16).clamp(280, 400);
+                Self {
+                    panel_margin: "8,64,0,0".into(),
+                    panel_w: w.min(330),
+                    map_margin: "8,64,0,0".into(),
+                    map_w: w,
+                    cols: (118, 56, 56),
+                    touch_controls: true,
+                    thrust_margin: "8,0,0,8".into(),
+                }
             }
-            // Instantiation replaces root components; re-attach the context.
-            world.entity_mut(root).insert(DataContext(vm.clone()));
-            match panel {
-                Panel::Hud => {
-                    // The HUD is a passive readout, but its root spans the
-                    // window and stack rows stretch full-width: with default
-                    // Pickable they swallow clicks aimed at panels and the
-                    // 3D scene beneath (found by click-path tracing). The
-                    // whole tree opts out of picking.
-                    ignore_picking_recursive(world, root);
-                }
-                Panel::Vessel => {
-                    world.entity_mut(root).insert(Visibility::Hidden);
-                    world.insert_resource(VesselPanel(root));
-                }
-                Panel::Map => {
-                    world.entity_mut(root).insert(Visibility::Hidden);
-                    world.insert_resource(MapPanel(root));
+        }
+    }
+
+    fn fill(&self, template: &str) -> String {
+        template
+            .replace("@PM", &self.panel_margin)
+            .replace("@PW", &self.panel_w.to_string())
+            .replace("@PS", &(self.panel_w - 26).to_string())
+            .replace("@MM", &self.map_margin)
+            .replace("@MW", &self.map_w.to_string())
+            .replace("@MS", &(self.map_w - 26).to_string())
+            .replace("@C1", &self.cols.0.to_string())
+            .replace("@C2", &self.cols.1.to_string())
+            .replace("@C3", &self.cols.2.to_string())
+            .replace("@TM", &self.thrust_margin)
+    }
+}
+
+/// Build (or rebuild) every UI document for the current window shape.
+/// Runs each frame; tears down and re-instantiates only when the MODE
+/// flips (desktop <-> phone, portrait <-> landscape).
+fn relayout_ui(world: &mut World) {
+    let Some(model) = world.get_resource::<HudModel>().map(|m| m.0.clone()) else { return };
+    let mut windows = world.query::<&Window>();
+    let Some((w, h)) = windows.iter(world).next().map(|w| (w.width(), w.height())) else {
+        return;
+    };
+    let mode = UiMode::of(w, h);
+    if world.resource::<UiLayoutState>().0 == Some(mode) {
+        return;
+    }
+    world.resource_mut::<UiLayoutState>().0 = Some(mode);
+    info!("ui layout: {mode:?} ({w:.0}x{h:.0})");
+
+    // Tear down the previous layout's documents.
+    let old: Vec<Entity> = world
+        .query_filtered::<Entity, With<UiRoot>>()
+        .iter(world)
+        .collect();
+    for e in old {
+        world.entity_mut(e).despawn();
+    }
+
+    let m = Metrics::for_mode(mode, w);
+    enum Doc {
+        Hud,
+        Vessel,
+        Map,
+        Controls,
+    }
+    let mut docs = vec![
+        (m.fill(HUD_XAML), Doc::Hud),
+        (m.fill(PANEL_XAML), Doc::Vessel),
+        (m.fill(MAP_XAML), Doc::Map),
+    ];
+    if m.touch_controls {
+        docs.push((m.fill(TOUCH_TOPBAR_XAML), Doc::Controls));
+        docs.push((m.fill(TOUCH_THRUST_XAML), Doc::Controls));
+        docs.push((m.fill(TOUCH_WEAPONS_XAML), Doc::Controls));
+    }
+    for (xaml, doc) in docs {
+        let scene = bevy_pf::XamlScene::parse(&xaml).expect("ui xaml is valid");
+        let root = world.spawn(DataContext(model.clone())).id();
+        if let Err(e) = bevy_pf::instantiate_document(world, root, &scene.document()) {
+            error!("ui failed to instantiate: {e}");
+        }
+        // Instantiation replaces root components; re-attach the context.
+        world.entity_mut(root).insert((DataContext(model.clone()), UiRoot));
+        match doc {
+            Doc::Hud => {
+                // The HUD is a passive readout, but its root spans the
+                // window and stack rows stretch full-width: with default
+                // Pickable they swallow clicks aimed at panels and the
+                // 3D scene beneath (found by click-path tracing). The
+                // whole tree opts out of picking.
+                ignore_picking_recursive(world, root);
+            }
+            Doc::Vessel => {
+                world.entity_mut(root).insert(Visibility::Hidden);
+                world.insert_resource(VesselPanel(root));
+            }
+            Doc::Map => {
+                world.entity_mut(root).insert(Visibility::Hidden);
+                world.insert_resource(MapPanel(root));
+            }
+            Doc::Controls => {
+                // Wire each named button to its virtual key.
+                let buttons: Vec<(Entity, KeyCode)> = world
+                    .get::<XamlNames>(root)
+                    .map(|names| {
+                        TOUCH_KEYS
+                            .iter()
+                            .filter_map(|(n, k)| names.get(n).map(|e| (e, *k)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (button, key) in buttons {
+                    world.entity_mut(button).insert(TouchKey(key));
                 }
             }
         }
-    });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
