@@ -387,7 +387,7 @@ const PANEL_XAML: &str = r##"
 const COCKPIT_TAPE_XAML: &str = r##"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,10,0,0"
+        HorizontalAlignment="@TA" VerticalAlignment="Top" Margin="@TPM"
         Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="14,4">
   <TextBlock Text="{Binding heading}" Foreground="#00E5FF" FontSize="12"/>
 </Border>
@@ -404,7 +404,7 @@ const COCKPIT_RETICLE_XAML: &str = r##"
 const COCKPIT_THREAT_XAML: &str = r##"
 <StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,10,12,0">
+            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="@HM">
   <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="11"/>
 </StackPanel>
 "##;
@@ -412,8 +412,8 @@ const COCKPIT_THREAT_XAML: &str = r##"
 const COCKPIT_CONTACTS_XAML: &str = r##"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,34,12,0"
-        Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,6" Width="252">
+        HorizontalAlignment="@CA" VerticalAlignment="Top" Margin="@CM"
+        Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,6" Width="@CW">
   <StackPanel>
     <TextBlock Text="CONTACTS" Foreground="#5A6472" FontSize="10"/>
     <ItemsControl ItemsSource="{Binding contacts}">
@@ -433,7 +433,7 @@ const COCKPIT_CONTACTS_XAML: &str = r##"
 const COCKPIT_CONSOLE_XAML: &str = r##"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,8"
+        HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="@KM"
         Background="#D80B111A" BorderBrush="#1E3A44" BorderThickness="1" Padding="18,6">
   <StackPanel>
     <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="16" FontWeight="Bold"
@@ -677,6 +677,16 @@ struct Metrics {
     touch_controls: bool,
     /// Bottom-left thrust cluster margin (clears the HUD in landscape).
     thrust_margin: String,
+    /// Cockpit contacts panel: alignment / margin / width. Portrait has
+    /// no room beside the bars, so it stacks below them.
+    contacts_align: String,
+    contacts_margin: String,
+    contacts_w: i32,
+    /// Cockpit top row: heading tape alignment/margin, threat margin.
+    tape_align: String,
+    tape_margin: String,
+    threat_margin: String,
+    console_margin: String,
 }
 
 impl Metrics {
@@ -690,6 +700,13 @@ impl Metrics {
                 cols: (190, 90, 90),
                 touch_controls: false,
                 thrust_margin: "8,0,0,8".into(),
+                contacts_align: "Right".into(),
+                contacts_margin: "0,34,12,0".into(),
+                contacts_w: 252,
+                tape_align: "Center".into(),
+                tape_margin: "0,10,0,0".into(),
+                threat_margin: "0,10,12,0".into(),
+                console_margin: "0,0,0,8".into(),
             },
             // Landscape phone: desktop arrangement (it fits), plus touch
             // controls in the corners.
@@ -710,6 +727,13 @@ impl Metrics {
                     cols: (118, 56, 56),
                     touch_controls: true,
                     thrust_margin: "8,0,0,8".into(),
+                    contacts_align: "Left".into(),
+                    contacts_margin: "12,180,0,0".into(),
+                    contacts_w: (win_w as i32 - 24).clamp(240, 366),
+                    tape_align: "Right".into(),
+                    tape_margin: "0,110,8,0".into(),
+                    threat_margin: "0,80,8,0".into(),
+                    console_margin: "0,0,0,178".into(),
                 }
             }
         }
@@ -727,6 +751,13 @@ impl Metrics {
             .replace("@C2", &self.cols.1.to_string())
             .replace("@C3", &self.cols.2.to_string())
             .replace("@TM", &self.thrust_margin)
+            .replace("@CA", &self.contacts_align)
+            .replace("@CM", &self.contacts_margin)
+            .replace("@CW", &self.contacts_w.to_string())
+            .replace("@TA", &self.tape_align)
+            .replace("@TPM", &self.tape_margin)
+            .replace("@HM", &self.threat_margin)
+            .replace("@KM", &self.console_margin)
     }
 }
 
@@ -892,8 +923,8 @@ fn update_hud(
         nav_text
     });
     model.0.set_speed(format!("{:.1} KM/S", vel.0.length() / 1000.0));
-    let hdg = (90.0 - vel.0.y.atan2(vel.0.x).to_degrees()).rem_euclid(360.0);
-    model.0.set_heading(format!("<<  HDG {hdg:03.0}\u{00B0}  >>"));
+    let hdg = (90.0 - vel.0.y.atan2(vel.0.x).to_degrees()).rem_euclid(360.0).round() as i32 % 360;
+    model.0.set_heading(format!("<<  HDG {hdg:03}\u{00B0}  >>"));
     // Equality-checked setters: an unchanged readout costs nothing downstream.
     model.0.set_energy((ship.energy / ship.energy_max * 100.0).round());
     model.0.set_shield(ship.shield.round());

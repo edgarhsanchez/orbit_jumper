@@ -672,34 +672,126 @@ pub fn spawn_ship(
 ) {
     let (_, hull_rgb, hull_glow) = SHIP_PAINTS[style.paint % SHIP_PAINTS.len()];
     let (_, acc_rgb, acc_glow) = SHIP_ACCENTS[style.accent % SHIP_ACCENTS.len()];
+    // Part materials: painted hull plate, accent plate, dark machinery,
+    // strong accent glow (running lights), canopy glass.
     let hull_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(hull_rgb.0, hull_rgb.1, hull_rgb.2),
-        metallic: 0.3,
-        perceptual_roughness: 0.4,
-        emissive: LinearRgba::rgb(hull_glow.0, hull_glow.1, hull_glow.2),
+        metallic: 0.35,
+        perceptual_roughness: 0.45,
+        emissive: LinearRgba::rgb(hull_glow.0 * 0.25, hull_glow.1 * 0.25, hull_glow.2 * 0.25),
         ..default()
     });
-    let wing_mat = materials.add(StandardMaterial {
+    let acc_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(acc_rgb.0, acc_rgb.1, acc_rgb.2),
         metallic: 0.4,
-        emissive: LinearRgba::rgb(acc_glow.0, acc_glow.1, acc_glow.2),
+        perceptual_roughness: 0.5,
+        emissive: LinearRgba::rgb(acc_glow.0 * 0.3, acc_glow.1 * 0.3, acc_glow.2 * 0.3),
         ..default()
     });
-    // Frame silhouettes: hull mesh + wing span vary per frame.
-    let (hull_mesh, wing_size, nozzle_y) = match style.frame % SHIP_FRAMES.len() {
-        // DART: the classic needle.
-        0 => (meshes.add(Cone::new(5.0, 18.0).mesh().resolution(16)), (16.0, 5.0), -10.0),
-        // LANCE: longer, slimmer, narrow wings.
-        1 => (meshes.add(Cone::new(3.6, 26.0).mesh().resolution(16)), (11.0, 7.0), -14.0),
-        // HAMMER: broad wedge with wide wings.
-        _ => (meshes.add(Cone::new(8.0, 14.0).mesh().resolution(6)), (22.0, 6.0), -8.0),
-    };
+    let mach_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.22, 0.24, 0.28),
+        metallic: 0.6,
+        perceptual_roughness: 0.7,
+        ..default()
+    });
+    let glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(acc_rgb.0, acc_rgb.1, acc_rgb.2),
+        emissive: LinearRgba::rgb(acc_glow.0 * 4.0, acc_glow.1 * 4.0, acc_glow.2 * 4.0),
+        unlit: true,
+        ..default()
+    });
+    let canopy_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.55, 0.85, 1.0),
+        emissive: LinearRgba::rgb(0.8, 1.6, 2.2),
+        metallic: 0.2,
+        ..default()
+    });
     let flame_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.6, 0.15),
         emissive: LinearRgba::rgb(14.0, 5.0, 0.8),
         unlit: true,
         ..default()
     });
+
+    // Space needs no streamlining: hulls are stepped segment stacks,
+    // trusses, plates and pods — machinery you could believe in.
+    // Parts: (size, material id, translation, z-rotation). Material ids:
+    // 0 hull, 1 accent, 2 machinery, 3 glow, 4 canopy.
+    let frame = style.frame % SHIP_FRAMES.len();
+    let mut parts: Vec<((f32, f32, f32), usize, (f32, f32, f32), f32)> = vec![
+        // Spine truss + cross-braces.
+        ((1.2, 23.0, 1.2), 2, (0.0, -1.0, 0.0), 0.0),
+        ((4.4, 0.8, 0.8), 2, (0.0, 2.0, 0.0), 0.0),
+        ((4.4, 0.8, 0.8), 2, (0.0, -5.0, 0.0), 0.0),
+        // Cockpit canopy near the nose.
+        ((2.2, 3.0, 1.6), 4, (0.0, 6.0, 1.0), 0.0),
+        // Engine block + twin nozzles.
+        ((5.0, 3.6, 3.0), 2, (0.0, -9.0, 0.0), 0.0),
+        ((1.6, 2.6, 1.6), 2, (-1.7, -11.4, 0.0), 0.0),
+        ((1.6, 2.6, 1.6), 2, (1.7, -11.4, 0.0), 0.0),
+        // Running-light strips.
+        ((0.35, 12.0, 0.3), 3, (-1.9, 0.0, 1.0), 0.0),
+        ((0.35, 12.0, 0.3), 3, (1.9, 0.0, 1.0), 0.0),
+        // Antenna mast + sensor pod.
+        ((0.25, 5.5, 0.25), 2, (2.3, 3.0, 1.8), 0.35),
+        ((0.9, 0.9, 0.9), 3, (3.1, 5.2, 2.6), 0.0),
+        // Radiator fins, angled.
+        ((4.6, 2.8, 0.18), 1, (-3.6, -4.0, 0.7), 0.5),
+        ((4.6, 2.8, 0.18), 1, (3.6, -4.0, 0.7), -0.5),
+    ];
+    match frame {
+        // DART: stepped needle, layered swept wing plates.
+        0 => parts.extend([
+            ((4.6, 5.0, 2.6), 0, (0.0, 3.0, 0.0), 0.0),
+            ((3.4, 4.2, 2.1), 0, (0.0, 7.4, 0.0), 0.0),
+            ((1.9, 4.0, 1.5), 0, (0.0, 11.2, 0.0), 0.0),
+            ((7.0, 3.8, 0.5), 1, (-5.0, -4.0, 0.0), 0.35),
+            ((7.0, 3.8, 0.5), 1, (5.0, -4.0, 0.0), -0.35),
+            ((4.4, 2.4, 0.5), 1, (-6.0, -6.4, 0.5), 0.5),
+            ((4.4, 2.4, 0.5), 1, (6.0, -6.4, 0.5), -0.5),
+        ]),
+        // LANCE: long truss hull with outrigger pods.
+        1 => parts.extend([
+            ((3.2, 7.0, 2.0), 0, (0.0, 3.5, 0.0), 0.0),
+            ((2.4, 6.0, 1.7), 0, (0.0, 9.5, 0.0), 0.0),
+            ((1.4, 5.0, 1.2), 0, (0.0, 14.5, 0.0), 0.0),
+            ((9.0, 1.1, 1.1), 2, (0.0, -2.0, 0.0), 0.0),
+            ((1.8, 5.0, 1.8), 1, (-5.4, -2.0, 0.0), 0.0),
+            ((1.8, 5.0, 1.8), 1, (5.4, -2.0, 0.0), 0.0),
+            ((0.9, 0.9, 2.6), 3, (-5.4, 0.8, 0.0), 0.0),
+            ((0.9, 0.9, 2.6), 3, (5.4, 0.8, 0.0), 0.0),
+        ]),
+        // HAMMER: broad decks, quad engines.
+        _ => parts.extend([
+            ((9.2, 4.2, 2.8), 0, (0.0, 2.0, 0.0), 0.0),
+            ((6.6, 3.6, 2.4), 0, (0.0, 5.8, 0.0), 0.0),
+            ((3.6, 3.0, 1.8), 0, (0.0, 9.0, 0.0), 0.0),
+            ((10.0, 4.6, 0.6), 1, (-7.0, -3.0, 0.0), 0.2),
+            ((10.0, 4.6, 0.6), 1, (7.0, -3.0, 0.0), -0.2),
+            ((1.6, 2.6, 1.6), 2, (-4.4, -11.0, 0.0), 0.0),
+            ((1.6, 2.6, 1.6), 2, (4.4, -11.0, 0.0), 0.0),
+        ]),
+    }
+    // Seeded surface greebles: boxes of machinery, different every
+    // paint/frame combination.
+    let mut grng = oj_universe::SplitMix64(
+        0x9EEB1E ^ (style.frame as u64) << 8 ^ (style.paint as u64) << 16 ^ (style.accent as u64),
+    );
+    for _ in 0..7 {
+        let w = grng.range(0.5, 1.5) as f32;
+        parts.push((
+            (w, grng.range(0.6, 2.2) as f32, grng.range(0.3, 0.9) as f32),
+            2,
+            (
+                grng.range(-2.2, 2.2) as f32,
+                grng.range(-8.0, 4.0) as f32,
+                grng.range(0.9, 1.4) as f32,
+            ),
+            grng.range(-0.3, 0.3) as f32,
+        ));
+    }
+
+    let mats = [&hull_mat, &acc_mat, &mach_mat, &glow_mat, &canopy_mat];
     commands
         .spawn((
             Ship::default(),
@@ -707,29 +799,24 @@ pub fn spawn_ship(
             OriginAnchor,
             SimPos(pos),
             SimVel(vel),
-            Mesh3d(hull_mesh),
-            MeshMaterial3d(hull_mat.clone()),
             Transform::default(),
+            Visibility::default(),
         ))
         .with_children(|ship| {
-            // Swept wings.
-            ship.spawn((
-                Mesh3d(meshes.add(Cuboid::new(wing_size.0, wing_size.1, 1.6).mesh())),
-                MeshMaterial3d(wing_mat.clone()),
-                Transform::from_xyz(0.0, -6.0, 0.0),
-            ));
-            // Engine nozzle block.
-            ship.spawn((
-                Mesh3d(meshes.add(Cuboid::new(6.0, 4.0, 3.0).mesh())),
-                MeshMaterial3d(wing_mat),
-                Transform::from_xyz(0.0, nozzle_y, 0.0),
-            ));
+            for (size, mat, at, rot) in parts {
+                ship.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(size.0, size.1, size.2).mesh())),
+                    MeshMaterial3d(mats[mat].clone()),
+                    Transform::from_xyz(at.0, at.1, at.2)
+                        .with_rotation(Quat::from_rotation_z(rot)),
+                ));
+            }
             // Exhaust flame, pointing aft; bloom does the glow.
             ship.spawn((
                 EngineFlame,
-                Mesh3d(meshes.add(Cone::new(3.2, 12.0).mesh().resolution(10))),
+                Mesh3d(meshes.add(Cone::new(3.0, 11.0).mesh().resolution(10))),
                 MeshMaterial3d(flame_mat),
-                Transform::from_xyz(0.0, nozzle_y - 7.0, 0.0)
+                Transform::from_xyz(0.0, -16.5, 0.0)
                     .with_rotation(Quat::from_rotation_z(std::f32::consts::PI)),
                 Visibility::Hidden,
             ));
@@ -837,7 +924,7 @@ fn drive_camera(
         .filter(|v| v.0.length() > 1.0)
         .map(|v| {
             let n = v.0.normalized();
-            Vec3::new(n.x as f32, n.y as f32, 0.0)
+            Vec3::new(n.x as f32, n.y as f32, n.z as f32).normalize_or(Vec3::Y)
         })
         .unwrap_or(Vec3::Y);
     let target = match *view {
@@ -847,9 +934,11 @@ fn drive_camera(
                 .looking_at(Vec3::ZERO, Vec3::Z)
         }
         ViewMode::Cockpit => {
+            // Full-3D chase: the view pitches with climbs and dives. The
+            // up reference flips to Y when the nose points near-vertical.
+            let up = if heading.z.abs() > 0.85 { Vec3::Y } else { Vec3::Z };
             let eye = -heading * 26.0 + Vec3::Z * 12.0;
-            Transform::from_translation(eye)
-                .looking_at(heading * 400.0 + Vec3::Z * 2.0, Vec3::Z)
+            Transform::from_translation(eye).looking_at(heading * 400.0, up)
         }
     };
     // Critically damped-ish chase: fast enough to track a dogfight,

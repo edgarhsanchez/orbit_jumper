@@ -119,6 +119,18 @@ fn spawn_raiders(
         emissive: LinearRgba::rgb(0.7, 0.1, 0.9),
         ..default()
     });
+    let core_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.2, 0.18),
+        metallic: 0.65,
+        perceptual_roughness: 0.6,
+        ..default()
+    });
+    let glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.9, 0.3, 1.0),
+        emissive: LinearRgba::rgb(2.6, 0.5, 3.2),
+        unlit: true,
+        ..default()
+    });
     commands
         .spawn((
             SystemScoped,
@@ -128,17 +140,41 @@ fn spawn_raiders(
             SimPos(pos),
             SimVel(ship_vel.0),
             BodyVel::default(),
-            // Inverted dart: broad base forward — unmistakably not ours.
-            Mesh3d(meshes.add(Cone::new(7.0, 14.0).mesh().resolution(3))),
+            // Angular strike frame: a 3-sided prism core — nothing about
+            // it reads friendly or aerodynamic.
+            Mesh3d(meshes.add(Cone::new(6.5, 13.0).mesh().resolution(3))),
             MeshMaterial3d(hull_mat),
             Transform::default(),
         ))
         .with_children(|alien| {
+            // Jagged fin trio at 120-degree spacing.
+            for k in 0..3 {
+                let a = std::f32::consts::TAU * k as f32 / 3.0;
+                alien.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(11.0, 2.2, 0.8).mesh())),
+                    MeshMaterial3d(fin_mat.clone()),
+                    Transform::from_xyz(a.cos() * 3.0, 2.0 - k as f32 * 2.4, a.sin() * 3.0)
+                        .with_rotation(Quat::from_rotation_y(a) * Quat::from_rotation_z(0.45)),
+                ));
+            }
+            // Reactor block + spike antennas + eye pods.
             alien.spawn((
-                Mesh3d(meshes.add(Cuboid::new(18.0, 3.0, 1.4).mesh())),
-                MeshMaterial3d(fin_mat),
-                Transform::from_xyz(0.0, 4.0, 0.0),
+                Mesh3d(meshes.add(Cuboid::new(4.2, 3.2, 3.2).mesh())),
+                MeshMaterial3d(core_mat.clone()),
+                Transform::from_xyz(0.0, -7.5, 0.0),
             ));
+            alien.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.3, 7.0, 0.3).mesh())),
+                MeshMaterial3d(core_mat),
+                Transform::from_xyz(-2.0, 5.0, 1.2).with_rotation(Quat::from_rotation_z(-0.5)),
+            ));
+            for side in [-1.0f32, 1.0] {
+                alien.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.9).mesh().ico(1).unwrap())),
+                    MeshMaterial3d(glow_mat.clone()),
+                    Transform::from_xyz(side * 2.6, 4.6, 0.8),
+                ));
+            }
         });
     info!("raider inbound (level {level}, pack cap {pack_cap})");
 }
