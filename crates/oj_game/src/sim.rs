@@ -582,6 +582,52 @@ pub fn spawn_bodies(
             ));
         }
     }
+
+    // Comets: sun-grazers on fierce ellipses, seeded per system. They
+    // outgas an anti-sunward tail, drop collectible ice along the path,
+    // and hit hard if you cross one (comets.rs drives all of that).
+    let outer = system
+        .planets
+        .last()
+        .map(|p| p.orbit.semi_major)
+        .unwrap_or(2.0e11);
+    let mut comet_rng = oj_universe::SplitMix64(
+        0xC04E75
+            ^ (system.id.index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (system.id.sector.x as u64).rotate_left(13)
+            ^ (system.id.sector.y as u64).rotate_left(29)
+            ^ (system.id.sector.z as u64).rotate_left(47),
+    );
+    let comet_count = 2 + (comet_rng.next_u64() % 3) as usize;
+    for c in 0..comet_count {
+        commands.spawn((
+            SystemScoped,
+            OnRails(KeplerOrbit {
+                mu,
+                semi_major: outer * comet_rng.range(0.55, 1.35),
+                eccentricity: comet_rng.range(0.72, 0.93),
+                inclination: comet_rng.range(-0.3, 0.3),
+                raan: comet_rng.range(0.0, std::f64::consts::TAU),
+                arg_periapsis: comet_rng.range(0.0, std::f64::consts::TAU),
+                mean_anomaly_epoch: comet_rng.range(0.0, std::f64::consts::TAU),
+            }),
+            crate::comets::Comet::default(),
+            SimPos::default(),
+            BodyVel::default(),
+            Mesh3d(meshes.add(planetoid_mesh(
+                6.0,
+                system.id.index as u64 ^ (c as u64) << 29 ^ 0x1CE,
+                0.22,
+                [(0.55, 0.62, 0.7), (0.72, 0.8, 0.88), (0.88, 0.94, 1.0)],
+            ))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 0.55,
+                ..default()
+            })),
+            Transform::default(),
+        ));
+    }
 }
 
 /// Spawn a body's ride-orbit rings as render-space children: the parent's
@@ -953,15 +999,27 @@ fn flame_visibility(
     }
 }
 
-/// Mouse-wheel zoom, tactical view only.
+/// Zoom, tactical view only: mouse wheel, or hold [-]/[=] for pilots
+/// (and test rigs) without one.
 fn camera_zoom(
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
     view: Res<ViewMode>,
     mut rig: ResMut<CameraRig>,
 ) {
     let scroll: f32 = wheel.read().map(|w| w.y).sum();
-    if scroll != 0.0 && *view == ViewMode::Tactical {
+    if *view != ViewMode::Tactical {
+        return;
+    }
+    if scroll != 0.0 {
         rig.zoom = (rig.zoom * (1.0 - scroll * 0.12)).clamp(160.0, 4000.0);
+    }
+    // Held keys triple the zoom per second, frame-rate independent.
+    let held = keys.pressed(KeyCode::Minus) as i8 - keys.pressed(KeyCode::Equal) as i8;
+    if held != 0 {
+        let factor = 3.0f32.powf(time.delta_secs() * held as f32);
+        rig.zoom = (rig.zoom * factor).clamp(160.0, 4000.0);
     }
 }
 
@@ -1024,13 +1082,19 @@ fn debug_teleport(
     keys: Res<ButtonInput<KeyCode>>,
     planets: Query<(&CelestialBody, &SimPos, &BodyVel), (With<OnRails>, Without<Ship>)>,
     suns: Query<(&CelestialBody, &SimPos), (With<SunBody>, Without<Ship>, Without<OnRails>)>,
+    comets: Query<(&SimPos, &BodyVel), (With<crate::comets::Comet>, Without<Ship>)>,
     mut ships: Query<(&mut SimPos, &mut SimVel), (With<Ship>, Without<OnRails>, Without<SunBody>)>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyG) && !keys.just_pressed(KeyCode::KeyH) {
+    if !keys.just_pressed(KeyCode::KeyG)
+        && !keys.just_pressed(KeyCode::KeyH)
+        && !keys.just_pressed(KeyCode::KeyJ)
+    {
         return;
     }
     let Ok((mut spos, mut svel)) = ships.single_mut() else { return };
-    // H: the sun's doorstep (shader inspection); G: first planet.
+    // H: the sun's doorstep (shader inspection); J: alongside a comet
+    // (tail inspection — close enough that drifting in strikes you);
+    // G: first planet.
     if keys.just_pressed(KeyCode::KeyH) {
         let Ok((sun, sun_pos)) = suns.single() else { return };
         let r = sun.radius * 4.0;
@@ -1038,6 +1102,13 @@ fn debug_teleport(
         let v = (sun.mu / r).sqrt();
         svel.0 = Vec3d::new(0.0, v, 0.0);
         info!("debug teleport beside the sun");
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyJ) {
+        let Some((pos, vel)) = comets.iter().next() else { return };
+        spos.0 = pos.0 + Vec3d::new(2.0e8, 0.0, 0.0);
+        svel.0 = vel.0;
+        info!("debug teleport beside a comet");
         return;
     }
     let Some((body, pos, vel)) = planets.iter().next() else { return };

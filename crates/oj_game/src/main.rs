@@ -17,6 +17,7 @@ use oj_universe::{SectorCoord, SystemId, Universe};
 
 mod achievements;
 mod aliens;
+mod comets;
 mod command;
 mod modules;
 mod fx;
@@ -69,7 +70,7 @@ fn main() {
         .add_plugins((bevy::picking::mesh_picking::MeshPickingPlugin, command::CommandPlugin))
         .add_plugins((upgrades::UpgradesPlugin, weapons::WeaponsPlugin, achievements::AchievementsPlugin))
         .add_plugins((travel::TravelPlugin, aliens::AliensPlugin, stick::StickPlugin))
-        .add_plugins((fx::FxPlugin, solar::SolarPlugin))
+        .add_plugins((fx::FxPlugin, solar::SolarPlugin, comets::CometPlugin))
         .run();
 }
 

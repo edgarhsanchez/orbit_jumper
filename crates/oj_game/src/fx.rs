@@ -63,6 +63,44 @@ fn fbm(p: vec3<f32>) -> f32 {
     return v;
 }
 
+// Rodrigues rotation of p around a unit axis.
+fn rot_axis(p: vec3<f32>, axis: vec3<f32>, angle: f32) -> vec3<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    return p * c + cross(axis, p) * s + axis * dot(axis, p) * (1.0 - c);
+}
+
+struct Storm {
+    dir: vec3<f32>,
+    eye: f32,
+}
+
+// Storm cells: seeded vortices wander the photosphere, each twisting
+// the plasma around itself. The twist winds up and unwinds (bounded, so
+// hours of play never shear the noise into mush) while the cells drift,
+// dragging spiral arms across the surface.
+fn storm_warp(dir: vec3<f32>, seed: f32, t: f32) -> Storm {
+    var d = dir;
+    var eye = 0.0;
+    for (var i = 0; i < 3; i = i + 1) {
+        let fi = f32(i);
+        let a = seed * 37.0 + fi * 2.39996;
+        let b = seed * 61.0 + fi * 1.71;
+        var center = normalize(vec3<f32>(sin(a) * cos(b), sin(b), cos(a) * cos(b)));
+        center = normalize(center + 0.35 * vec3<f32>(
+            sin(t * 0.043 + fi * 2.1),
+            cos(t * 0.037 + fi * 1.3),
+            sin(t * 0.029 + fi * 4.2),
+        ));
+        let fall = exp(-pow(acos(clamp(dot(d, center), -1.0, 1.0)) * 2.6, 2.0));
+        let hand = select(1.0, -1.0, (i & 1) == 1);
+        let angle = fall * hand * 2.6 * sin(t * (0.21 + 0.07 * fi) + fi * 2.0);
+        d = rot_axis(d, center, angle);
+        eye = eye + fall;
+    }
+    return Storm(d, min(eye, 1.0));
+}
+
 // Class palette: deep M-red through G-gold to O-blue-white.
 fn heat_color(heat: f32, t: f32) -> vec3<f32> {
     let cool = mix(vec3<f32>(0.7, 0.12, 0.02), vec3<f32>(1.0, 0.45, 0.08), t);
@@ -86,8 +124,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let facing = clamp(dot(n_dir, v_dir), 0.0, 1.0);
     let rim = 1.0 - facing;
 
-    // Plasma coordinates: the unit direction, drifting and churning.
-    let p = n_dir * 3.2 + vec3<f32>(seed * 17.0);
+    // Plasma coordinates: the unit direction, storm-swirled, drifting
+    // and churning. The warp feeds every mode, so flame tongues spiral
+    // with the same storms the surface shows.
+    let storm = storm_warp(n_dir, seed, t);
+    let p = storm.dir * 3.2 + vec3<f32>(seed * 17.0);
     let churn = fbm(p + vec3<f32>(t * 0.11, -t * 0.07, t * 0.05));
     let cells = fbm(p * 2.7 - vec3<f32>(t * 0.05, t * 0.09, -t * 0.04));
     let plasma = churn * 0.65 + cells * 0.35;
@@ -96,11 +137,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // CORE: banded plasma surface, granulation-darkened, edge-dimmed
         // like a real photosphere.
         let band = smoothstep(0.25, 0.85, plasma);
-        var col = heat_color(heat, band);
+        // Storm eyes run hotter and brighter than the quiet surface.
+        var col = heat_color(heat, min(band + 0.25 * storm.eye, 1.0));
         let granule = smoothstep(0.35, 0.0, abs(cells - 0.5)) * 0.35;
         col = col * (1.0 - granule);
         let limb = mix(1.0, 0.55, rim * rim);
-        let glow = (2.5 + 9.0 * band) * boost * limb;
+        let glow = (2.5 + 9.0 * band + 4.0 * storm.eye) * boost * limb;
         return vec4<f32>(col * glow, 1.0);
     } else if mode < 1.5 {
         // FLAMES: noise eroded by the silhouette rim — tongues that lick
