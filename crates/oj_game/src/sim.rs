@@ -17,6 +17,7 @@ pub struct SimPlugin;
 
 impl Plugin for SimPlugin {
     fn build(&self, app: &mut App) {
+        app.init_asset::<crate::fx::SunMaterial>();
         app.init_resource::<GameUniverse>()
             .insert_resource(ShipStyle::load())
             .init_resource::<SimClock>()
@@ -261,12 +262,13 @@ fn spawn_current_system(
     game_style: Res<ShipStyle>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sun_materials: ResMut<Assets<crate::fx::SunMaterial>>,
 ) {
     let Some(system) = game.universe.system(game.current) else {
         error!("current system does not exist; universe misconfigured");
         return;
     };
-    spawn_bodies(&mut commands, &system, &mut meshes, &mut materials);
+    spawn_bodies(&mut commands, &system, &mut meshes, &mut materials, &mut sun_materials);
 
     // The ship starts in a comfortable circular orbit of the sun.
     let mu = oj_orbits::G * system.sun.mass;
@@ -349,11 +351,28 @@ fn spawn_current_system(
 
 /// Spawn a system's celestial content: sun, planets, moons, ring debris.
 /// Deterministic per system id, so a revisited system looks the same.
+/// Class temperature on the shader's 0..1 heat axis.
+fn sun_heat(class: SunClass) -> f32 {
+    match class {
+        SunClass::M => 0.05,
+        SunClass::K => 0.18,
+        SunClass::G => 0.32,
+        SunClass::F => 0.45,
+        SunClass::A => 0.6,
+        SunClass::B => 0.75,
+        SunClass::O => 0.9,
+        SunClass::NeutronStar => 0.97,
+        SunClass::Magnetar => 1.0,
+        SunClass::BlackHole => 0.0,
+    }
+}
+
 pub fn spawn_bodies(
     commands: &mut Commands,
     system: &SolarSystem,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    sun_materials: &mut Assets<crate::fx::SunMaterial>,
 ) {
     let mu = oj_orbits::G * system.sun.mass;
 
@@ -391,12 +410,16 @@ pub fn spawn_bodies(
         },
         SimPos(Vec3d::ZERO),
         BodyVel::default(),
-        Mesh3d(meshes.add(Sphere::new(200.0).mesh().ico(4).unwrap())),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            emissive: LinearRgba::rgb(8.0, 6.5, 3.0),
-            base_color: Color::srgb(1.0, 0.9, 0.5),
-            ..default()
-        })),
+        // The living sun: a shader-driven plasma core with a licking
+        // flame shell and breathing corona layered over it — animated
+        // entirely on the GPU, class-tinted from deep M-red to O-blue.
+        Mesh3d(meshes.add(Sphere::new(200.0).mesh().ico(5).unwrap())),
+        MeshMaterial3d(sun_materials.add(crate::fx::SunMaterial::new(
+            sun_heat(system.sun.class),
+            0.0,
+            (system.sun.radius % 97.0e7) as f32 / 97.0e7,
+            1.0,
+        ))),
         PointLight {
             color: Color::srgb(1.0, 0.95, 0.85),
             intensity: 3.0e13,
@@ -407,6 +430,22 @@ pub fn spawn_bodies(
         },
         Transform::default(),
     )).id();
+    let heat = sun_heat(system.sun.class);
+    let seed = (system.sun.radius % 97.0e7) as f32 / 97.0e7;
+    let shell_mesh = meshes.add(Sphere::new(200.0).mesh().ico(4).unwrap());
+    for (mode, scale, boost) in [(1.0, 1.10f32, 1.0), (2.0, 1.32, 1.0)] {
+        let shell = commands
+            .spawn((
+                Mesh3d(shell_mesh.clone()),
+                MeshMaterial3d(sun_materials.add(crate::fx::SunMaterial::new(
+                    heat, mode, seed, boost,
+                ))),
+                Transform::from_scale(Vec3::splat(scale)),
+                bevy::picking::Pickable::IGNORE,
+            ))
+            .id();
+        commands.entity(sun_entity).add_child(shell);
+    }
     spawn_rings_for(commands, sun_entity, sun_radius, f64::INFINITY, meshes, &ring_dim);
 
     // Planets on rails. Meshes are per-body at PHYSICAL radius (render
@@ -984,16 +1023,24 @@ fn drive_camera(
 fn debug_teleport(
     keys: Res<ButtonInput<KeyCode>>,
     planets: Query<(&CelestialBody, &SimPos, &BodyVel), (With<OnRails>, Without<Ship>)>,
-    mut ships: Query<(&mut SimPos, &mut SimVel), (With<Ship>, Without<OnRails>)>,
+    suns: Query<(&CelestialBody, &SimPos), (With<SunBody>, Without<Ship>, Without<OnRails>)>,
+    mut ships: Query<(&mut SimPos, &mut SimVel), (With<Ship>, Without<OnRails>, Without<SunBody>)>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyG) {
+    if !keys.just_pressed(KeyCode::KeyG) && !keys.just_pressed(KeyCode::KeyH) {
         return;
     }
-    let (Some((body, pos, vel)), Ok((mut spos, mut svel))) =
-        (planets.iter().next(), ships.single_mut())
-    else {
+    let Ok((mut spos, mut svel)) = ships.single_mut() else { return };
+    // H: the sun's doorstep (shader inspection); G: first planet.
+    if keys.just_pressed(KeyCode::KeyH) {
+        let Ok((sun, sun_pos)) = suns.single() else { return };
+        let r = sun.radius * 4.0;
+        spos.0 = sun_pos.0 + Vec3d::new(r, 0.0, 0.0);
+        let v = (sun.mu / r).sqrt();
+        svel.0 = Vec3d::new(0.0, v, 0.0);
+        info!("debug teleport beside the sun");
         return;
-    };
+    }
+    let Some((body, pos, vel)) = planets.iter().next() else { return };
     spos.0 = pos.0 + Vec3d::new(body.radius * 12.0, 0.0, 0.0);
     svel.0 = vel.0;
     info!("debug teleport beside {}", body.name);

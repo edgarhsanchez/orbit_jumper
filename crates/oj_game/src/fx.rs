@@ -4,11 +4,144 @@
 //! independently. Everything lives in sim space (SimPos) so the
 //! camera-relative sync places it like any other world object.
 
+use bevy::pbr::{Material, MaterialPlugin};
 use bevy::prelude::*;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::{Shader, ShaderRef};
 use oj_orbits::Vec3d;
 
 use crate::sim::SystemScoped;
 use crate::{SimPos, SimVel};
+
+/// The living-sun shader: fractal plasma, licking flame shell, corona.
+/// One material, three modes — all animated in-shader off `globals.time`
+/// so a burning star costs zero CPU per frame.
+pub const SUN_SHADER: Handle<Shader> =
+    bevy::asset::uuid_handle!("7be0c5a1-9e2f-4b3d-8f6a-52d90c11ab34");
+
+const SUN_WGSL: &str = r#"
+#import bevy_pbr::forward_io::VertexOutput
+#import bevy_pbr::mesh_view_bindings::{globals, view}
+
+struct SunParams {
+    // x: heat 0..1 (class tint), y: mode (0 core, 1 flames, 2 corona),
+    // z: seed, w: intensity scale
+    v: vec4<f32>,
+}
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: SunParams;
+
+fn hash3(p: vec3<f32>) -> f32 {
+    return fract(sin(dot(p, vec3<f32>(127.1, 311.7, 74.7))) * 43758.5453123);
+}
+
+fn vnoise(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash3(i);
+    let b = hash3(i + vec3<f32>(1.0, 0.0, 0.0));
+    let c = hash3(i + vec3<f32>(0.0, 1.0, 0.0));
+    let d = hash3(i + vec3<f32>(1.0, 1.0, 0.0));
+    let e = hash3(i + vec3<f32>(0.0, 0.0, 1.0));
+    let f1 = hash3(i + vec3<f32>(1.0, 0.0, 1.0));
+    let g = hash3(i + vec3<f32>(0.0, 1.0, 1.0));
+    let h = hash3(i + vec3<f32>(1.0, 1.0, 1.0));
+    let x1 = mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    let x2 = mix(mix(e, f1, u.x), mix(g, h, u.x), u.y);
+    return mix(x1, x2, u.z);
+}
+
+fn fbm(p: vec3<f32>) -> f32 {
+    var v = 0.0;
+    var a = 0.5;
+    var q = p;
+    for (var i = 0; i < 4; i = i + 1) {
+        v = v + a * vnoise(q);
+        q = q * 2.13 + vec3<f32>(7.7, 3.1, 1.9);
+        a = a * 0.5;
+    }
+    return v;
+}
+
+// Class palette: deep M-red through G-gold to O-blue-white.
+fn heat_color(heat: f32, t: f32) -> vec3<f32> {
+    let cool = mix(vec3<f32>(0.7, 0.12, 0.02), vec3<f32>(1.0, 0.45, 0.08), t);
+    let mid  = mix(vec3<f32>(1.0, 0.5, 0.1),  vec3<f32>(1.0, 0.92, 0.55), t);
+    let hot  = mix(vec3<f32>(0.55, 0.7, 1.0), vec3<f32>(0.92, 0.97, 1.0), t);
+    if heat < 0.5 {
+        return mix(cool, mid, heat * 2.0);
+    }
+    return mix(mid, hot, (heat - 0.5) * 2.0);
+}
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    let heat = params.v.x;
+    let mode = params.v.y;
+    let seed = params.v.z;
+    let boost = params.v.w;
+    let t = globals.time;
+    let n_dir = normalize(in.world_normal);
+    let v_dir = normalize(view.world_position - in.world_position.xyz);
+    let facing = clamp(dot(n_dir, v_dir), 0.0, 1.0);
+    let rim = 1.0 - facing;
+
+    // Plasma coordinates: the unit direction, drifting and churning.
+    let p = n_dir * 3.2 + vec3<f32>(seed * 17.0);
+    let churn = fbm(p + vec3<f32>(t * 0.11, -t * 0.07, t * 0.05));
+    let cells = fbm(p * 2.7 - vec3<f32>(t * 0.05, t * 0.09, -t * 0.04));
+    let plasma = churn * 0.65 + cells * 0.35;
+
+    if mode < 0.5 {
+        // CORE: banded plasma surface, granulation-darkened, edge-dimmed
+        // like a real photosphere.
+        let band = smoothstep(0.25, 0.85, plasma);
+        var col = heat_color(heat, band);
+        let granule = smoothstep(0.35, 0.0, abs(cells - 0.5)) * 0.35;
+        col = col * (1.0 - granule);
+        let limb = mix(1.0, 0.55, rim * rim);
+        let glow = (2.5 + 9.0 * band) * boost * limb;
+        return vec4<f32>(col * glow, 1.0);
+    } else if mode < 1.5 {
+        // FLAMES: noise eroded by the silhouette rim — tongues that lick
+        // outward and churn. Additive, so overlap builds white heat.
+        let tongue = fbm(p * 1.7 + vec3<f32>(-t * 0.23, t * 0.17, t * 0.13));
+        let ring = pow(rim, 1.6);
+        let flame = smoothstep(0.45, 0.8, tongue * (0.35 + ring));
+        let col = heat_color(heat, 0.35 + 0.5 * flame);
+        let a = flame * (0.35 + 0.65 * ring);
+        return vec4<f32>(col * (3.5 * boost) * a, a * 0.85);
+    }
+    // CORONA: pure fresnel halo with a slow breathing pulse.
+    let pulse = 0.8 + 0.2 * sin(t * 0.7 + seed * 6.28);
+    let halo = pow(rim, 2.6) * pulse;
+    let col = heat_color(heat, 0.75);
+    return vec4<f32>(col * (1.6 * boost) * halo, halo * 0.5);
+}
+"#;
+
+/// Uniform block for [`SUN_SHADER`]; see `SunParams` in the WGSL.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct SunMaterial {
+    #[uniform(0)]
+    pub params: Vec4,
+}
+
+impl SunMaterial {
+    pub fn new(heat: f32, mode: f32, seed: f32, boost: f32) -> Self {
+        Self { params: Vec4::new(heat, mode, seed, boost) }
+    }
+}
+
+impl Material for SunMaterial {
+    fn fragment_shader() -> ShaderRef {
+        ShaderRef::Handle(SUN_SHADER)
+    }
+    fn alpha_mode(&self) -> AlphaMode {
+        // Core is opaque; flame/corona shells are additive.
+        if self.params.y < 0.5 { AlphaMode::Opaque } else { AlphaMode::Add }
+    }
+}
 
 /// A piece of an effect: fades, shrinks and dies.
 #[derive(Component)]
@@ -33,7 +166,12 @@ pub struct FxPlugin;
 
 impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (tick_particles, flicker_flames));
+        let _ = app
+            .world_mut()
+            .resource_mut::<Assets<Shader>>()
+            .insert(&SUN_SHADER, Shader::from_wgsl(SUN_WGSL, "oj_sun.wgsl"));
+        app.add_plugins(MaterialPlugin::<SunMaterial>::default())
+            .add_systems(Update, (tick_particles, flicker_flames));
     }
 }
 
