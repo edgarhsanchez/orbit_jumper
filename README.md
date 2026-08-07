@@ -13,21 +13,43 @@
 
 Real orbital mechanics in a hostile system. Propulsion is deliberately weak
 against interplanetary distances — getting anywhere means **hitching rides on
-gravity**: click-and-hold a planet's orbit ring and the ship burns into a
-capture, then the planet carries you around the system for free. Dive past a
-body in free flight and its gravity — real, integrated — slings you out
-faster. Meanwhile alien raiders hunt you in packs of up to six that keep
-getting tougher with your pilot level, forever.
+gravity**: click a planet's orbit ring and the ship burns into a capture,
+then the planet carries you around the system for free. Dive past a body in
+free flight and its gravity — real, integrated — slings you out faster.
+Meanwhile alien raiders hunt you in packs of up to six that keep getting
+tougher with your pilot level, forever — under a living, storming sun, past
+comets dragging ice down the dark, inside a procedural soundscape built for
+the size of the void.
 
 ## The game
 
 | | |
 |---|---|
-| <img src="docs/media/orbit-rings.png" alt="Orbit rings around a planetoid" width="440"> | **Ride the rings.** Every body advertises orbit rings — larger bodies throw larger rings, so a giant can be leapt onto from far away. Click and hold a ring; the ship plans the burn, captures, and rides. Energy prices every maneuver. |
+| <img src="docs/media/orbit-rings.png" alt="Orbit rings around a planetoid" width="440"> | **Ride the rings.** Every body advertises orbit rings — larger bodies throw larger rings, so a giant can be leapt onto from far away. One click on a ring and the ship plans the burn, captures, and rides; the orbit is sticky until you command another or hit EXIT. Riding recharges the tank, and the arrows throttle you around the ring in either direction. Energy prices every free-flight maneuver. |
 | <img src="docs/media/target-lock.png" alt="A pulsing lock ring around a clicked target in tactical view" width="440"> | **Click to lock, then fire.** Click any hostile vessel to designate it: a pulsing ring rides the target, the contacts stack flags it [LOCKED], and your laser and missiles prioritize it while it's in reach. Click again to release. |
 | <img src="docs/media/dreadnought.png" alt="A dreadnought boss dwarfing the player ship at point-blank range, volley bolts in flight" width="440"> | **Fight what your level summons.** Raider packs spawn harder as you climb — more damage, faster bolts, shorter cooldowns — with crimson elites past level six and a **DREADNOUGHT** boss owed every five levels: a dozen raiders' worth of hull, volley fire, and a bounty to match. Score is bounty-weighted kills, so leveling means beating what the game sends. |
 | <img src="docs/media/system-orbits.png" alt="System-scale view: full orbit tracks around the sun" width="440"> | **A whole galaxy on rails.** Deterministic f64 simulation at a fixed 60 Hz — celestials ride Kepler rails, the ship integrates. Zoom from cockpit to system scale and jump between the systems of your galaxy indefinitely. |
 | <img src="docs/media/ship-close.png" alt="Greebled ship close-up: truss spine, canopy, radiator panels" width="440"> | **Your ship, your build.** Three frames (DART / LANCE / HAMMER), paints, accents — greebled hulls seeded per style, so every combination looks distinct (raiders are hand-built jagged prisms). Craft shield plating, drives, collectors, weapon racks; tiers never cap. |
+
+## The systems
+
+| | |
+|---|---|
+| <img src="docs/media/living-sun.png" alt="The living sun: shader-driven plasma with storm cells and a breathing corona, ringed by ride orbits" width="440"> | **The living sun.** Every star is a WGSL shader, not a sprite: fractal plasma churns across the photosphere, seeded storm cells wander the surface and twist it into spiral arms with hot bright eyes, a flame shell licks the silhouette, and a corona breathes over it all. The palette rides each sun's spectral class — M-dwarfs smolder red, G suns burn gold, O giants blaze blue-white — and every system's seed churns differently. All of it animates on the GPU at zero per-frame CPU cost. |
+| <img src="docs/media/comet-tail.png" alt="A comet nucleus streaming its anti-sunward mote tail, the player ship alongside" width="440"> | **Comets.** Each system seeds sun-grazers on fierce ellipses. Near perihelion they outgas hard — a glowing mote tail that points away from the sun, as real tails do — and they drop chunks of collectible ice along their path. Fly through one and it hurts: the shield absorbs first (the reactor pays for the field), the rest burns to the hull, and the impact shoves you off your line. |
+| <img src="docs/media/solar-arm.png" alt="The solar arm deployed: telescoping boom aimed at the sun with the octagonal collector lit" width="440"> | **The solar arm.** Free flight has no ambient refueling — energy comes from riding an orbit, or from the deliberate, vulnerable act of deploying the arm (`P`): a telescoping boom aims at the nearest sun, the octagonal collector lights on its sun side, and the tank fills fast — but **weapons stay offline until it stows**. At full charge it stows itself. Better suns pour faster; they also burn hotter. |
+| <img src="docs/media/level-up.png" alt="HUD flash on level-up: LEVEL 4 — +2 SKILL POINTS, with the pilot line showing banked SP" width="440"> | **Level up, spend points.** Score is bounty-weighted combat, so pilot level is paced by what you can defeat — and every new level banks **2 skill points**, announced with a HUD flash and a chime. A point buys the next tier of any gear slot outright, no salvage needed, from the vessel panel or the digit keys; salvage stays the grind currency between levels. Kills pay twice: bounty score, plus wreckage that **streams to the nearest ship on its own** — the salvage magnet spares you the sweep-up lap. |
+
+## The sound of the void
+
+Every sound is procedurally synthesized (`tools/synth_audio.py`) and embedded
+in the binary: a 64-second seamless **space drone** — deep breathing fifths,
+detuned pads, starlight shimmer, distant bells, every oscillator quantized to
+the loop length — under an **engine hum** that fades up only while you burn,
+and one-shot effects for everything that happens: laser zap, missile whoosh,
+explosions with a sub-thump, shield shimmer, hull thud, orbit-capture chime,
+salvage pickup, solar-arm servo, hull-critical warning. Browsers hold audio
+until your first click; after that, the void hums.
 
 ## Made for phones too
 
@@ -49,14 +71,17 @@ rotation.
 | Action | Desktop | Touch |
 |---|---|---|
 | Thrust | drag the NAV stick or arrows | drag the NAV stick |
-| Command an orbit | click + hold a body or ring | tap + hold |
+| Command an orbit | click a body or ring | tap it |
+| Exit the current orbit | `O` | **EXIT ORBIT** |
 | Target lock | click an enemy vessel | tap it |
+| Solar arm (refuel) | `P` | **ARM** |
 | Climb / dive (3D) | `E` / `Q` | **VERT+ / VERT−** |
 | Cockpit ⇄ tactical | `F` | **VIEW** |
 | Laser / missile¹ | `Z` / `X` | **LAS / MSL** |
 | Gravity wells¹ | `C` / `V` | **PULL / PUSH** |
+| Buy gear tiers | `1`–`8` | vessel panel buttons |
 | Vessel / map / study | `Tab` / `M` / `S` | topbar buttons |
-| Zoom | mouse wheel | — |
+| Zoom | mouse wheel or hold `-` / `=` | — |
 
 ¹ once the weapon system is crafted — uninstalled weapons show no controls.
 
@@ -67,6 +92,8 @@ rotation.
 - **[Bevy 0.19](https://bevy.org)** — ECS, 3D rendering, HDR + bloom
 - **[bevy_pf](https://github.com/edgarhsanchez/bevy_pf)** — the HUD is XAML with data-bound view-models, including the animated console buttons (control templates, triggers, storyboards); the NAV stick is raw bevy_ui pointer capture
 - **f64 simulation** — camera-relative f32 rendering keeps precision at Gm scales; sim state is `SimPos`/`SimVel` in meters
+- **WGSL sun shader** — one material, three modes (plasma core / flame shell / corona), storm-warped fbm noise animated off shader time
+- **Procedural audio** — every sound synthesized offline by a committed Python script and embedded as vorbis; no audio assets shipped
 - **wasm** — the web build targets WebGL2 so it runs on iOS Safari and Android Chrome; a GitHub Actions workflow rebuilds and republishes on every push to main that touches the game
 - Procedural planetoids (displaced icospheres with vertex-color banding), greebled ships — no art assets
 

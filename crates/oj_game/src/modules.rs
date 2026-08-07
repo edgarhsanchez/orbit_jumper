@@ -9,7 +9,7 @@ use oj_materials::Element;
 use oj_orbits::Vec3d;
 use oj_universe::SunClass;
 
-use crate::sim::{DT, Ship, SimClock, SunBody, SystemScoped};
+use crate::sim::{DT, OnRails, OnRailsAround, Ship, SimClock, SunBody, SystemScoped, TIME_WARP};
 use crate::{GameUniverse, SimPos};
 
 // ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ impl Plugin for SalvagePlugin {
             .add_message::<ShipDestroyed>()
             .add_systems(
                 FixedUpdate,
-                (detect_death, spawn_wrecks, collect_wrecks, respawn).chain(),
+                (detect_death, spawn_wrecks, magnet_wrecks, collect_wrecks, respawn).chain(),
             );
     }
 }
@@ -261,6 +261,44 @@ fn spawn_wrecks(
                 Transform::default(),
             ));
         }
+    }
+}
+
+/// How far the salvage tractor reaches, sim meters.
+const MAGNET_RADIUS: f64 = 4.0e9;
+/// Peak pull speed, m/s of sim time; ramps up as the debris closes.
+const MAGNET_SPEED: f64 = 1.4e6;
+
+/// Free-floating wreckage streams toward the NEAREST vessel — combat
+/// debris comes to the victor instead of demanding a sweep-up lap.
+/// Nearest, not "the player's": in the multiplayer phase whoever is
+/// closest collects, and this min-by-distance is the line that will
+/// decide it. Ring debris on rails is excluded — that salvage is
+/// terrain, visited on purpose.
+#[allow(clippy::type_complexity)]
+fn magnet_wrecks(
+    ships: Query<&SimPos, With<Ship>>,
+    mut wrecks: Query<
+        &mut SimPos,
+        (With<Wreck>, Without<OnRails>, Without<OnRailsAround>, Without<Ship>),
+    >,
+) {
+    let dt = DT * TIME_WARP;
+    for mut pos in &mut wrecks {
+        let Some((target, d)) = ships
+            .iter()
+            .map(|s| (s.0, s.0.distance(pos.0)))
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        else {
+            return;
+        };
+        if d > MAGNET_RADIUS || d < 1.0 {
+            continue;
+        }
+        // Gentle at the field's edge, urgent near the hull.
+        let pull = MAGNET_SPEED * (0.25 + 0.75 * (1.0 - d / MAGNET_RADIUS));
+        let step = (target - pos.0) / d * (pull * dt).min(d);
+        pos.0 += step;
     }
 }
 
@@ -329,6 +367,47 @@ pub fn displayed_sun_class(class: SunClass, revealed: bool) -> String {
         )
     } else {
         "unknown (hold S to study)".to_string()
+    }
+}
+
+#[cfg(test)]
+mod magnet_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use oj_materials::Element;
+
+    /// The multiplayer-critical rule: debris streams to the NEAREST
+    /// ship, whoever that is — and debris outside the field stays put.
+    #[test]
+    fn wrecks_stream_to_the_nearest_ship() {
+        let mut world = World::new();
+        world.spawn((Ship::default(), SimPos(Vec3d::ZERO)));
+        world.spawn((Ship::default(), SimPos(Vec3d::new(1.0e10, 0.0, 0.0))));
+        let near_b = world
+            .spawn((Wreck { value: 1, element: Element::Iron }, SimPos(Vec3d::new(8.0e9, 0.0, 0.0))))
+            .id();
+        let far = world
+            .spawn((Wreck { value: 1, element: Element::Iron }, SimPos(Vec3d::new(0.0, 9.0e9, 0.0))))
+            .id();
+        world.run_system_once(magnet_wrecks).unwrap();
+        let p = world.get::<SimPos>(near_b).unwrap().0;
+        assert!(
+            p.x > 8.0e9,
+            "wreck between two ships must move toward the CLOSER one (x {} should grow)",
+            p.x
+        );
+        let f = world.get::<SimPos>(far).unwrap().0;
+        assert_eq!(f, Vec3d::new(0.0, 9.0e9, 0.0), "outside the field nothing moves");
+        // Repeated ticks must converge on the near ship, never overshoot
+        // into the far one's lap.
+        for _ in 0..600 {
+            world.run_system_once(magnet_wrecks).unwrap();
+        }
+        let p = world.get::<SimPos>(near_b).unwrap().0;
+        assert!(
+            p.distance(Vec3d::new(1.0e10, 0.0, 0.0)) < 2.0e9,
+            "after many ticks the wreck should sit near ship B, got {p:?}"
+        );
     }
 }
 
