@@ -9,12 +9,13 @@
 //! stronger projector digs a deeper well. Practice drones orbit near the
 //! starting ring so there is something to shoot.
 
+use bevy::picking::events::{Click, Pointer};
 use bevy::prelude::*;
 use oj_materials::UpgradeSlot;
 use oj_orbits::{Vec3d, gravity_accel};
 
 use crate::modules::{RunScore, Wreck};
-use crate::sim::{BodyVel, CelestialBody, DT, OnRails, Ship, SystemScoped, TIME_WARP};
+use crate::sim::{BodyVel, CelestialBody, DT, OnRails, RENDER_SCALE, Ship, SystemScoped, TIME_WARP};
 use crate::travel::SystemChanged;
 use crate::upgrades::ShipUpgrades;
 use crate::{GameUniverse, SimPos, SimVel};
@@ -63,13 +64,31 @@ struct Cooldowns {
     well: f64,
 }
 
+/// The designated target: click any hostile hull to lock it. Locked
+/// targets get laser priority and missile guidance; clicking the locked
+/// vessel again releases the lock.
+#[derive(Resource, Default)]
+pub struct TargetLock(pub Option<Entity>);
+
+/// The in-world lock indicator ring.
+#[derive(Component)]
+struct LockMarker;
+
+/// A short-lived laser beam flash between ship and victim.
+#[derive(Component)]
+struct LaserBeam {
+    ttl: f64,
+}
+
 pub struct WeaponsPlugin;
 
 impl Plugin for WeaponsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Cooldowns>()
-            .add_systems(Startup, spawn_drones)
-            .add_systems(Update, respawn_drones)
+            .init_resource::<TargetLock>()
+            .add_observer(lock_target)
+            .add_systems(Startup, (spawn_drones, spawn_lock_marker))
+            .add_systems(Update, (respawn_drones, drive_lock_marker, fade_beams))
             .add_systems(
                 FixedUpdate,
                 (fire_weapons, fly_missiles, fly_drones, apply_wells, reap_hulls).chain(),
@@ -142,11 +161,92 @@ fn spawn_drone_set(
     }
 }
 
+/// Click a hostile hull (or any of its mesh children) to lock it; click
+/// the locked vessel again to release. Presses on rings and celestials
+/// never reach here — they carry no Hull anywhere in their ancestry.
+fn lock_target(
+    ev: On<Pointer<Click>>,
+    hulls: Query<(), With<Hull>>,
+    parents: Query<&ChildOf>,
+    mut lock: ResMut<TargetLock>,
+) {
+    let mut e = ev.entity;
+    loop {
+        if hulls.get(e).is_ok() {
+            lock.0 = if lock.0 == Some(e) { None } else { Some(e) };
+            info!("target lock: {:?}", lock.0);
+            return;
+        }
+        match parents.get(e) {
+            Ok(child_of) => e = child_of.parent(),
+            Err(_) => return,
+        }
+    }
+}
+
+fn spawn_lock_marker(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.spawn((
+        LockMarker,
+        SimPos(Vec3d::ZERO),
+        Mesh3d(meshes.add(Torus::new(15.0, 16.5).mesh())),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.35, 0.4, 0.9),
+            emissive: LinearRgba::rgb(2.4, 0.4, 0.5),
+            unlit: true,
+            ..default()
+        })),
+        // The torus lies in XZ by default; stand it into the orbital
+        // plane so it reads as a ring around the vessel from above.
+        Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+        Visibility::Hidden,
+        bevy::picking::Pickable::IGNORE,
+    ));
+}
+
+/// Ride the locked vessel with a pulsing ring; release the lock the
+/// moment the target stops existing (killed, despawned with the system).
+fn drive_lock_marker(
+    time: Res<Time>,
+    mut lock: ResMut<TargetLock>,
+    targets: Query<&SimPos, (With<Hull>, Without<LockMarker>)>,
+    mut markers: Query<(&mut SimPos, &mut Transform, &mut Visibility), With<LockMarker>>,
+) {
+    let Ok((mut pos, mut transform, mut vis)) = markers.single_mut() else { return };
+    let target_pos = lock.0.and_then(|e| targets.get(e).ok());
+    match target_pos {
+        Some(tp) => {
+            pos.0 = tp.0;
+            let pulse = 1.0 + 0.18 * (time.elapsed_secs() * 5.0).sin();
+            transform.scale = Vec3::splat(pulse);
+            *vis = Visibility::Inherited;
+        }
+        None => {
+            lock.0 = None;
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
+/// Beam flashes decay fast — the laser is hitscan; this is muzzle light.
+fn fade_beams(mut beams: Query<(Entity, &mut LaserBeam)>, mut commands: Commands) {
+    for (entity, mut beam) in &mut beams {
+        beam.ttl -= 1.0 / 60.0;
+        if beam.ttl <= 0.0 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn fire_weapons(
     keys: Res<ButtonInput<KeyCode>>,
     mut cd: ResMut<Cooldowns>,
     upgrades: Res<ShipUpgrades>,
+    lock: Res<TargetLock>,
     mut run: ResMut<RunScore>,
     mut ships: Query<(&mut Ship, &SimPos, &SimVel)>,
     mut drones: Query<(Entity, &SimPos, &mut Hull)>,
@@ -159,32 +259,68 @@ fn fire_weapons(
     cd.well = (cd.well - DT).max(0.0);
     let Ok((mut ship, pos, vel)) = ships.single_mut() else { return };
 
-    // Laser: auto-aim the nearest drone in range; instant.
+    // Target priority: the locked vessel when it is in reach, otherwise
+    // whatever is nearest — locking is a promise, not a handcuff.
+    let prefer = |max_range: f64, drones: &Query<(Entity, &SimPos, &mut Hull)>| {
+        lock.0
+            .and_then(|e| drones.get(e).ok().map(|(e, p, _)| (e, p.0.distance(pos.0))))
+            .filter(|(_, d)| *d < max_range)
+            .or_else(|| {
+                drones
+                    .iter()
+                    .map(|(e, p, _)| (e, p.0.distance(pos.0)))
+                    .filter(|(_, d)| *d < max_range)
+                    .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            })
+            .map(|(e, _)| e)
+    };
+
+    // Laser: hitscan on the locked target, else the nearest hull in range.
     let laser_tier = upgrades.tier(UpgradeSlot::LaserWeapon);
     if keys.pressed(KeyCode::KeyZ) && laser_tier > 0 && cd.laser == 0.0 && ship.energy >= 5.0 {
-        let nearest = drones
-            .iter_mut()
-            .map(|(e, p, h)| (e, p.0.distance(pos.0), h))
-            .filter(|(_, d, _)| *d < LASER_RANGE)
-            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        if let Some((_, _, mut hull)) = nearest {
-            ship.energy -= 5.0;
-            cd.laser = LASER_COOLDOWN;
-            hull.hp -= 10.0 * 1.5f64.powi(laser_tier as i32 - 1);
-            run.score_hit();
+        let victim = prefer(LASER_RANGE, &drones);
+        if let Some(victim) = victim {
+            let victim_pos = drones.get(victim).map(|(_, p, _)| p.0).unwrap_or(pos.0);
+            if let Ok((_, _, mut hull)) = drones.get_mut(victim) {
+                ship.energy -= 5.0;
+                cd.laser = LASER_COOLDOWN;
+                hull.hp -= 10.0 * 1.5f64.powi(laser_tier as i32 - 1);
+                run.score_hit();
+            }
+            // The beam itself: a camera-space sliver from ship to victim,
+            // gone in a tenth of a second. Hitscan needs muzzle light or
+            // combat reads as nothing happening.
+            let to_target = victim_pos - pos.0;
+            let len = (to_target.length() * RENDER_SCALE) as f32;
+            let dir3 = Vec3::new(to_target.x as f32, to_target.y as f32, to_target.z as f32)
+                .normalize_or_zero();
+            commands.spawn((
+                SystemScoped,
+                LaserBeam { ttl: 0.12 },
+                SimPos(pos.0 + to_target * 0.5),
+                Mesh3d(meshes.add(Cuboid::new(0.7, 1.0, 0.7).mesh())),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(1.0, 0.3, 0.3),
+                    emissive: LinearRgba::rgb(4.0, 0.6, 0.6),
+                    unlit: true,
+                    ..default()
+                })),
+                Transform {
+                    rotation: Quat::from_rotation_arc(Vec3::Y, dir3),
+                    scale: Vec3::new(1.0, len, 1.0),
+                    ..default()
+                },
+                bevy::picking::Pickable::IGNORE,
+            ));
         }
     }
 
-    // Missile: launched prograde, seeks the nearest drone.
+    // Missile: launched prograde; seeks the locked vessel, else nearest.
     let missile_tier = upgrades.tier(UpgradeSlot::MissileRack);
     if keys.just_pressed(KeyCode::KeyX) && missile_tier > 0 && cd.missile == 0.0 && ship.energy >= 10.0 {
         ship.energy -= 10.0;
         cd.missile = MISSILE_COOLDOWN;
-        let target = drones
-            .iter()
-            .map(|(e, p, _)| (e, p.0.distance(pos.0)))
-            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-            .map(|(e, _)| e);
+        let target = prefer(f64::INFINITY, &drones);
         commands.spawn((
             SystemScoped,
             Missile {

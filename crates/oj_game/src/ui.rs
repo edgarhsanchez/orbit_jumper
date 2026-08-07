@@ -100,6 +100,8 @@ struct HudVm {
     threat: String,
     heading: String,
     contacts: Vec<ContactVm>,
+    weapon_hints: String,
+    target: String,
 }
 
 #[derive(Resource, Clone)]
@@ -144,7 +146,7 @@ impl UiMode {
 }
 
 #[derive(Resource, Default)]
-struct UiLayoutState(Option<(UiMode, crate::sim::ViewMode)>);
+struct UiLayoutState(Option<(UiMode, crate::sim::ViewMode, Armament)>);
 
 /// Marks every UI document root so a relayout can tear the set down.
 #[derive(Component)]
@@ -439,6 +441,8 @@ const COCKPIT_CONSOLE_XAML: &str = r##"
     <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="16" FontWeight="Bold"
                HorizontalAlignment="Center"/>
     <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10" Margin="0,2,0,0"/>
+    <TextBlock Text="{Binding target}" Foreground="#FF5459" FontSize="10" Margin="0,2,0,0"
+               HorizontalAlignment="Center"/>
   </StackPanel>
 </Border>
 "##;
@@ -470,7 +474,7 @@ const HUD_COCKPIT_XAML: &str = r##"
                    Foreground="#FF7043" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
     </StackPanel>
   </Border>
-  <TextBlock Text="[F] TACTICAL  [E/Q] VERT  [Z] LASER  [X] MSL  [C/V] WELLS" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
+  <TextBlock Text="{Binding weapon_hints}" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
 </StackPanel>
 "##;
 
@@ -766,35 +770,7 @@ const TOUCH_THRUST_XAML: &str = r##"
     <StackPanel>
       <StackPanel Orientation="Horizontal">
         <Rectangle Width="12" Height="2" Fill="#00FFD4" Margin="0,5,6,0"/>
-        <TextBlock Text="THRUST_CTRL_L" Foreground="#3E6A66" FontSize="9"/>
-      </StackPanel>
-      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-    <Button x:Name="btn_up" Style="{StaticResource con-teal}" Margin="0,0,6,0">
-      <StackPanel>
-        <TextBlock Text="PRO" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
-        <TextBlock Text="FWD" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
-      </StackPanel>
-    </Button>
-    <Button x:Name="btn_down" Style="{StaticResource con-teal}" Margin="0,0,0,0">
-      <StackPanel>
-        <TextBlock Text="RET" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
-        <TextBlock Text="AFT" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
-      </StackPanel>
-    </Button>
-      </StackPanel>
-      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-    <Button x:Name="btn_left" Style="{StaticResource con-teal}" Margin="0,0,6,0">
-      <StackPanel>
-        <TextBlock Text="IN" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
-        <TextBlock Text="RAD-" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
-      </StackPanel>
-    </Button>
-    <Button x:Name="btn_right" Style="{StaticResource con-teal}" Margin="0,0,0,0">
-      <StackPanel>
-        <TextBlock Text="OUT" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
-        <TextBlock Text="RAD+" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
-      </StackPanel>
-    </Button>
+        <TextBlock Text="NAV_CTRL_L" Foreground="#3E6A66" FontSize="9"/>
       </StackPanel>
       <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
     <Button x:Name="btn_climb" Style="{StaticResource con-teal}" Margin="0,0,6,0">
@@ -901,21 +877,35 @@ const TOUCH_WEAPONS_XAML: &str = r##"
         <Rectangle Width="12" Height="2" Fill="#FF7043" Margin="0,5,6,0"/>
         <TextBlock Text="WPN_SYST_R" Foreground="#6A4A3E" FontSize="9"/>
       </StackPanel>
-      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+      @WROW1
+      @WROW2
+    </StackPanel>
+  </Border>
+</StackPanel>
+"##;
+
+// Weapon buttons exist only once their system is CRAFTED. Each row below
+// is substituted into TOUCH_WEAPONS_XAML per the installed tiers; an
+// unarmed vessel gets no weapons cluster at all.
+const WPN_LAS_BTN: &str = r##"
     <Button x:Name="btn_las" Style="{StaticResource con-orange}" Margin="0,0,6,0">
       <StackPanel>
         <TextBlock Text="LAS" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
         <TextBlock Text="HOLD Z" Foreground="#6A4A3E" FontSize="8" HorizontalAlignment="Center"/>
       </StackPanel>
     </Button>
+"##;
+
+const WPN_MSL_BTN: &str = r##"
     <Button x:Name="btn_msl" Style="{StaticResource con-orange}" Margin="0,0,0,0">
       <StackPanel>
         <TextBlock Text="MSL" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
         <TextBlock Text="X" Foreground="#6A4A3E" FontSize="8" HorizontalAlignment="Center"/>
       </StackPanel>
     </Button>
-      </StackPanel>
-      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+"##;
+
+const WPN_WELL_ROW: &str = r##"
     <Button x:Name="btn_pull" Style="{StaticResource con-violet}" Margin="0,0,6,0">
       <StackPanel>
         <TextBlock Text="PULL" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
@@ -928,24 +918,80 @@ const TOUCH_WEAPONS_XAML: &str = r##"
         <TextBlock Text="WELL V" Foreground="#55496A" FontSize="8" HorizontalAlignment="Center"/>
       </StackPanel>
     </Button>
-      </StackPanel>
-    </StackPanel>
-  </Border>
-</StackPanel>
 "##;
 
+/// Armament fingerprint: which weapon systems are installed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Armament {
+    laser: bool,
+    missiles: bool,
+    wells: bool,
+}
+
+impl Armament {
+    fn of(upgrades: &crate::upgrades::ShipUpgrades) -> Self {
+        Self {
+            laser: upgrades.tier(UpgradeSlot::LaserWeapon) > 0,
+            missiles: upgrades.tier(UpgradeSlot::MissileRack) > 0,
+            wells: upgrades.tier(UpgradeSlot::ForceFieldProjector) > 0,
+        }
+    }
+
+    fn any(&self) -> bool {
+        self.laser || self.missiles || self.wells
+    }
+
+    /// The weapons cluster for this armament, or None when unarmed.
+    fn weapons_xaml(&self, m: &Metrics) -> Option<String> {
+        if !self.any() {
+            return None;
+        }
+        let mut row1 = String::new();
+        if self.laser {
+            row1.push_str(WPN_LAS_BTN);
+        }
+        if self.missiles {
+            row1.push_str(WPN_MSL_BTN);
+        }
+        let wrap = |inner: &str| {
+            if inner.is_empty() {
+                String::new()
+            } else {
+                format!("<StackPanel Orientation=\"Horizontal\" Margin=\"0,6,0,0\">{inner}</StackPanel>")
+            }
+        };
+        let row2 = if self.wells { WPN_WELL_ROW } else { "" };
+        Some(
+            m.fill(TOUCH_WEAPONS_XAML)
+                .replace("@WROW1", &wrap(&row1))
+                .replace("@WROW2", &wrap(row2)),
+        )
+    }
+
+    /// The cockpit hint line only advertises what is actually installed.
+    fn hints(&self) -> String {
+        let mut s = String::from("[F] TACTICAL  [E/Q] VERT");
+        if self.laser {
+            s.push_str("  [Z] LASER");
+        }
+        if self.missiles {
+            s.push_str("  [X] MSL");
+        }
+        if self.wells {
+            s.push_str("  [C/V] WELLS");
+        }
+        s
+    }
+}
+
 /// btn_* name -> virtual key, for wiring TouchKey after instantiation.
-const TOUCH_KEYS: [(&str, KeyCode); 14] = [
+const TOUCH_KEYS: [(&str, KeyCode); 10] = [
     ("btn_view", KeyCode::KeyF),
     ("btn_climb", KeyCode::KeyE),
     ("btn_dive", KeyCode::KeyQ),
     ("btn_vessel", KeyCode::Tab),
     ("btn_map", KeyCode::KeyM),
     ("btn_study", KeyCode::KeyS),
-    ("btn_up", KeyCode::ArrowUp),
-    ("btn_down", KeyCode::ArrowDown),
-    ("btn_left", KeyCode::ArrowLeft),
-    ("btn_right", KeyCode::ArrowRight),
     ("btn_las", KeyCode::KeyZ),
     ("btn_msl", KeyCode::KeyX),
     ("btn_pull", KeyCode::KeyC),
@@ -962,12 +1008,15 @@ struct MapPanel(Entity);
 
 /// Craftable slots, in vessel-panel row order; the craft command's
 /// parameter indexes this.
-const CRAFT_SLOTS: [(UpgradeSlot, &str, &str); 5] = [
+const CRAFT_SLOTS: [(UpgradeSlot, &str, &str); 8] = [
     (UpgradeSlot::Shield, "SHIELD PLATING", "#00A2FF"),
     (UpgradeSlot::CommandArray, "COMMAND ARRAY", "#B48CFF"),
     (UpgradeSlot::RocketDrive, "ROCKET DRIVE", "#FF7043"),
     (UpgradeSlot::EnergyCollector, "COLLECTOR", "#00FFD4"),
     (UpgradeSlot::GravityDrive, "GRAVITY DRIVE", "#FF4FD8"),
+    (UpgradeSlot::LaserWeapon, "LASER ARRAY", "#FF5459"),
+    (UpgradeSlot::MissileRack, "MISSILE RACK", "#FFB454"),
+    (UpgradeSlot::ForceFieldProjector, "WELL PROJECTOR", "#B48CFF"),
 ];
 
 fn init_model(mut commands: Commands) {
@@ -1042,7 +1091,8 @@ impl Metrics {
                 map_w: 470,
                 cols: (190, 90, 90),
                 touch_controls: false,
-                thrust_margin: "8,0,0,8".into(),
+                // Right of the virtual stick (24px margin + 132px pad).
+                thrust_margin: "172,0,0,8".into(),
                 contacts_align: "Right".into(),
                 contacts_margin: "0,34,12,0".into(),
                 contacts_w: 252,
@@ -1055,7 +1105,9 @@ impl Metrics {
             // controls in the corners.
             UiMode::PhoneLandscape => Self {
                 touch_controls: true,
-                thrust_margin: "260,0,0,8".into(),
+                // The stick sits right of the status column (x 260-392);
+                // the vert cluster rides beside it.
+                thrust_margin: "408,0,0,8".into(),
                 ..Self::for_mode(UiMode::Desktop, win_w)
             },
             // Portrait: panels become near-full-width overlays with
@@ -1069,7 +1121,9 @@ impl Metrics {
                     map_w: w,
                     cols: (118, 56, 56),
                     touch_controls: true,
-                    thrust_margin: "8,0,0,8".into(),
+                    // Portrait: above the stick — beside it would collide
+                    // with the right-anchored weapons cluster at 390px.
+                    thrust_margin: "24,0,0,196".into(),
                     contacts_align: "Left".into(),
                     contacts_margin: "12,180,0,0".into(),
                     contacts_w: (win_w as i32 - 24).clamp(240, 366),
@@ -1115,11 +1169,14 @@ fn relayout_ui(world: &mut World) {
     };
     let mode = UiMode::of(w, h);
     let view = *world.resource::<crate::sim::ViewMode>();
-    if world.resource::<UiLayoutState>().0 == Some((mode, view)) {
+    // Crafting a weapon system rebuilds the control surface: buttons for
+    // uninstalled weapons must not exist, not merely do nothing.
+    let arm = Armament::of(world.resource::<crate::upgrades::ShipUpgrades>());
+    if world.resource::<UiLayoutState>().0 == Some((mode, view, arm)) {
         return;
     }
-    world.resource_mut::<UiLayoutState>().0 = Some((mode, view));
-    info!("ui layout: {mode:?} / {view:?} ({w:.0}x{h:.0})");
+    world.resource_mut::<UiLayoutState>().0 = Some((mode, view, arm));
+    info!("ui layout: {mode:?} / {view:?} / {arm:?} ({w:.0}x{h:.0})");
 
     // Tear down the previous layout's documents.
     let old: Vec<Entity> = world
@@ -1146,7 +1203,7 @@ fn relayout_ui(world: &mut World) {
         world.remove_resource::<MapPanel>();
         // The cockpit console is a control surface on every device —
         // the Stitch design puts thrust and weapons ON the console.
-        vec![
+        let mut docs = vec![
             (m.fill(HUD_COCKPIT_XAML), Doc::Hud),
             (m.fill(COCKPIT_TAPE_XAML), Doc::Hud),
             (m.fill(COCKPIT_RETICLE_XAML), Doc::Hud),
@@ -1154,8 +1211,11 @@ fn relayout_ui(world: &mut World) {
             (m.fill(COCKPIT_CONTACTS_XAML), Doc::Hud),
             (m.fill(COCKPIT_CONSOLE_XAML), Doc::Hud),
             (m.fill(TOUCH_THRUST_XAML), Doc::Controls),
-            (m.fill(TOUCH_WEAPONS_XAML), Doc::Controls),
-        ]
+        ];
+        if let Some(weapons) = arm.weapons_xaml(&m) {
+            docs.push((weapons, Doc::Controls));
+        }
+        docs
     } else {
         vec![
             (m.fill(HUD_XAML), Doc::Hud),
@@ -1168,7 +1228,9 @@ fn relayout_ui(world: &mut World) {
         docs.push((m.fill(topbar), Doc::Controls));
         if !cockpit {
             docs.push((m.fill(TOUCH_THRUST_XAML), Doc::Controls));
-            docs.push((m.fill(TOUCH_WEAPONS_XAML), Doc::Controls));
+            if let Some(weapons) = arm.weapons_xaml(&m) {
+                docs.push((weapons, Doc::Controls));
+            }
         }
     }
     for (xaml, doc) in docs {
@@ -1189,11 +1251,17 @@ fn relayout_ui(world: &mut World) {
                 ignore_picking_recursive(world, root);
             }
             Doc::Vessel => {
-                world.entity_mut(root).insert(Visibility::Hidden);
+                // Panels float over the HUD; without an explicit z the
+                // HUD text bleeds through (seen on phone portrait).
+                world
+                    .entity_mut(root)
+                    .insert((Visibility::Hidden, GlobalZIndex(20)));
                 world.insert_resource(VesselPanel(root));
             }
             Doc::Map => {
-                world.entity_mut(root).insert(Visibility::Hidden);
+                world
+                    .entity_mut(root)
+                    .insert((Visibility::Hidden, GlobalZIndex(20)));
                 world.insert_resource(MapPanel(root));
             }
             Doc::Controls => {
@@ -1230,12 +1298,13 @@ fn update_hud(
     achieved: Res<crate::achievements::Unlocked>,
     flash: Res<crate::achievements::LastUnlock>,
     // Grouped: bevy caps a system at 16 parameters.
-    (game, atlas, style_res, raider_q, mut map_rows): (
+    (game, atlas, style_res, raider_q, mut map_rows, lock): (
         Res<crate::GameUniverse>,
         Res<crate::travel::SunAtlas>,
         Res<crate::sim::ShipStyle>,
-        Query<(&crate::SimPos, &crate::SimVel), With<crate::aliens::AlienShip>>,
+        Query<(Entity, &crate::SimPos, &crate::SimVel), With<crate::aliens::AlienShip>>,
         ResMut<crate::travel::MapRows>,
+        Res<crate::weapons::TargetLock>,
     ),
 ) {
     let (Some(model), Ok((ship, vel, nav, ship_pos))) = (model, ships.single()) else {
@@ -1292,20 +1361,27 @@ fn update_hud(
     });
 
     // Cockpit targeting: nearest contacts with distance, relative speed
-    // and closing rate. Closing (+) means it is coming for you.
+    // and closing rate. Closing (+) means it is coming for you. The
+    // locked vessel is flagged and drives the console target line.
+    let mut target_line = String::new();
     let mut contacts: Vec<(f64, ContactVm)> = Vec::new();
-    for (i, (a_pos, a_vel)) in raider_q.iter().enumerate() {
+    for (i, (entity, a_pos, a_vel)) in raider_q.iter().enumerate() {
         let rel = a_pos.0 - ship_pos.0;
         let dist = rel.length();
         let rel_v = a_vel.0 - vel.0;
         let closing = if dist > 1.0 { -(rel.dot(rel_v)) / dist } else { 0.0 };
         let in_laser = dist < 6.0e9;
+        let locked = lock.0 == Some(entity);
+        if locked {
+            target_line = format!("TGT LOCK: RAIDER-{} · {:.2} GM", i + 1, dist / 1.0e9);
+        }
         contacts.push((
             dist,
             ContactVm {
                 name: format!(
-                    "RAIDER-{}{}",
+                    "RAIDER-{}{}{}",
                     i + 1,
+                    if locked { "  [LOCKED]" } else { "" },
                     if in_laser { "  [IN RANGE]" } else { "" }
                 ),
                 data: format!(
@@ -1314,7 +1390,9 @@ fn update_hud(
                     rel_v.length() / 1000.0,
                     closing / 1000.0
                 ),
-                color: if in_laser {
+                color: if locked {
+                    "#FF2A9D".into()
+                } else if in_laser {
                     "#FF5459".into()
                 } else if closing > 0.0 {
                     "#FFB454".into()
@@ -1325,7 +1403,10 @@ fn update_hud(
         ));
     }
     contacts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    model.0.set_contacts(contacts.into_iter().map(|(_, c)| c).take(5).collect());
+    // Six, matching the raider pack cap — a full pack fits the stack.
+    model.0.set_contacts(contacts.into_iter().map(|(_, c)| c).take(6).collect());
+    model.0.set_target(target_line);
+    model.0.set_weapon_hints(Armament::of(&ship_upgrades).hints());
     if let Ok(sun) = suns.single() {
         model.0.set_sun_class(if study.revealed {
             format!(

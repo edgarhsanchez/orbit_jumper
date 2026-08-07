@@ -20,6 +20,7 @@ mod aliens;
 mod command;
 mod modules;
 mod sim;
+mod stick;
 mod travel;
 mod ui;
 mod upgrades;
@@ -29,6 +30,9 @@ fn main() {
     App::new()
         // Space is not gray: also proves the 3D pass composites under the UI.
         .insert_resource(ClearColor(Color::srgb(0.012, 0.016, 0.045)))
+        // The sim integrates with DT = 1/60 s per tick; Bevy's FixedUpdate
+        // defaults to 64 Hz, which silently ran the whole game 6.7% fast.
+        .insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "orbit jumper".into(),
@@ -62,7 +66,7 @@ fn main() {
         .add_plugins((modules::StudyPlugin, modules::ScorePlugin, modules::SalvagePlugin))
         .add_plugins((bevy::picking::mesh_picking::MeshPickingPlugin, command::CommandPlugin))
         .add_plugins((upgrades::UpgradesPlugin, weapons::WeaponsPlugin, achievements::AchievementsPlugin))
-        .add_plugins((travel::TravelPlugin, aliens::AliensPlugin))
+        .add_plugins((travel::TravelPlugin, aliens::AliensPlugin, stick::StickPlugin))
         .run();
 }
 

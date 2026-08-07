@@ -65,6 +65,7 @@ impl Plugin for UpgradesPlugin {
             tiers,
             book: Recipe::book(),
         })
+        .add_systems(Startup, dev_salvage)
         .add_systems(Update, (buy_upgrades, apply_to_new_ships));
     }
 }
@@ -83,6 +84,9 @@ fn buy_upgrades(
         (KeyCode::Digit3, UpgradeSlot::RocketDrive),
         (KeyCode::Digit4, UpgradeSlot::EnergyCollector),
         (KeyCode::Digit5, UpgradeSlot::GravityDrive),
+        (KeyCode::Digit6, UpgradeSlot::LaserWeapon),
+        (KeyCode::Digit7, UpgradeSlot::MissileRack),
+        (KeyCode::Digit8, UpgradeSlot::ForceFieldProjector),
     ];
     for (key, slot) in picks {
         if keys.just_pressed(key) {
@@ -134,6 +138,17 @@ pub fn row(upgrades: &ShipUpgrades, label: &str, slot: UpgradeSlot) -> String {
     match upgrades.next_cost(slot) {
         Some(cost) => format!("{label} T{} — next {} salvage", upgrades.tier(slot), cost),
         None => format!("{label} T{} — maxed", upgrades.tier(slot)),
+    }
+}
+
+/// Dev hook: OJ_SALVAGE=500 starts the run with salvage in hand, so
+/// upgrade-gated paths (weapon crafts, UI unlock states) can be exercised
+/// without a farming session. No-op on wasm and in normal runs.
+fn dev_salvage(mut run: ResMut<RunScore>) {
+    if let Ok(v) = std::env::var("OJ_SALVAGE")
+        && let Ok(v) = v.parse::<u64>()
+    {
+        run.salvage_value = v;
     }
 }
 

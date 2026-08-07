@@ -865,18 +865,20 @@ fn orient_ship(mut ships: Query<(&SimVel, &mut Transform), With<Ship>>) {
 /// Show the exhaust while burning: manual thrust or a guided transfer.
 fn flame_visibility(
     keys: Res<ButtonInput<KeyCode>>,
+    joy: Res<crate::stick::JoyInput>,
     ships: Query<(&Ship, &crate::command::NavState)>,
     mut flames: Query<&mut Visibility, With<EngineFlame>>,
 ) {
     let Ok((ship, nav)) = ships.single() else { return };
-    let thrusting = keys.any_pressed([
-        KeyCode::ArrowUp,
-        KeyCode::ArrowDown,
-        KeyCode::ArrowLeft,
-        KeyCode::ArrowRight,
-        KeyCode::KeyE,
-        KeyCode::KeyQ,
-    ]);
+    let thrusting = joy.active
+        || keys.any_pressed([
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::KeyE,
+            KeyCode::KeyQ,
+        ]);
     let burning = ship.energy > 0.0
         && (thrusting || matches!(nav, crate::command::NavState::Transfer { .. }));
     for mut vis in &mut flames {
@@ -992,23 +994,25 @@ fn place_child_rails(
     }
 }
 
-/// Arrow keys thrust in the orbital plane; costs energy.
+/// Manual thrust — keys or the virtual stick — costs energy.
 fn ship_controls(
     keys: Res<ButtonInput<KeyCode>>,
+    joy: Res<crate::stick::JoyInput>,
     mut ships: Query<(&mut Ship, &SimVel)>,
 ) {
     let (mut ship, _vel) = match ships.single_mut() {
         Ok(s) => s,
         Err(_) => return,
     };
-    let thrusting = keys.any_pressed([
-        KeyCode::ArrowUp,
-        KeyCode::ArrowDown,
-        KeyCode::ArrowLeft,
-        KeyCode::ArrowRight,
-        KeyCode::KeyE,
-        KeyCode::KeyQ,
-    ]);
+    let thrusting = joy.active
+        || keys.any_pressed([
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::KeyE,
+            KeyCode::KeyQ,
+        ]);
     if thrusting {
         ship.energy = (ship.energy - 4.0 * DT * TIME_WARP / 60.0).max(0.0);
     }
@@ -1016,6 +1020,7 @@ fn ship_controls(
 
 fn integrate_ships(
     keys: Res<ButtonInput<KeyCode>>,
+    joy: Res<crate::stick::JoyInput>,
     suns: Query<(&SunBody, &SimPos), Without<Ship>>,
     bodies: Query<(&CelestialBody, &SimPos), Without<Ship>>,
     mut ships: Query<(&Ship, &mut SimPos, &mut SimVel), With<Ship>>,
@@ -1049,6 +1054,11 @@ fn integrate_ships(
             }
             if keys.pressed(KeyCode::ArrowRight) {
                 accel += radial * t;
+            }
+            // The virtual joystick speaks the same basis, analog: y is
+            // prograde/retrograde, x is radial out/in.
+            if joy.active {
+                accel += prograde * (t * joy.vec.y as f64) + radial * (t * joy.vec.x as f64);
             }
             // Out-of-plane: E climbs above the ecliptic, Q dives below.
             // Space is a volume, not a board.
@@ -1108,7 +1118,7 @@ fn harvest_and_hazard(
 /// (sim meters / 1e7): only translations pass through this scale, so a
 /// mesh authored in meters renders 1e7x too large (found by screenshot —
 /// the camera sat inside the ship's own cone).
-const RENDER_SCALE: f64 = 1.0 / 1.0e7;
+pub(crate) const RENDER_SCALE: f64 = 1.0 / 1.0e7;
 
 fn sync_render_transforms(
     anchors: Query<&SimPos, With<OriginAnchor>>,

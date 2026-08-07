@@ -71,6 +71,10 @@ fn on_press(
     celestials: Query<&CelestialBody>,
     mut hold: ResMut<CommandHold>,
 ) {
+    // Every press, in the log: the cheapest possible probe of whether the
+    // picking pipeline is delivering events at all (it has silently died
+    // once already — this line is how it gets caught next time).
+    info!("pointer press on {:?}", ev.entity);
     // A press on a ring commands THAT orbit; a press on the body itself
     // commands its innermost ring.
     let picked = if let Ok(ring) = rings.get(ev.entity) {
@@ -127,19 +131,22 @@ fn tick_hold(
 
 fn guide_nav(
     keys: Res<ButtonInput<KeyCode>>,
+    joy: Res<crate::stick::JoyInput>,
     bodies: Query<(&CelestialBody, &SimPos, &BodyVel)>,
     mut ships: Query<(&mut Ship, &SimPos, &mut SimVel, &mut NavState)>,
 ) {
     let Ok((mut ship, pos, mut vel, mut nav)) = ships.single_mut() else { return };
     // Manual thrust overrides guidance — the pilot is always in charge.
-    if keys.any_pressed([
-        KeyCode::ArrowUp,
-        KeyCode::ArrowDown,
-        KeyCode::ArrowLeft,
-        KeyCode::ArrowRight,
-        KeyCode::KeyE,
-        KeyCode::KeyQ,
-    ]) {
+    if joy.active
+        || keys.any_pressed([
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::KeyE,
+            KeyCode::KeyQ,
+        ])
+    {
         *nav = NavState::Free;
         return;
     }
@@ -210,6 +217,7 @@ fn guide_nav(
 /// leave it faster (sun-frame) without having thrust. Score it.
 fn track_assists(
     keys: Res<ButtonInput<KeyCode>>,
+    joy: Res<crate::stick::JoyInput>,
     mut tracker: ResMut<AssistTracker>,
     mut run: ResMut<RunScore>,
     bodies: Query<(Entity, &CelestialBody, &SimPos)>,
@@ -219,14 +227,15 @@ fn track_assists(
         tracker.in_soi_of = None;
         return;
     };
-    let thrusting = keys.any_pressed([
-        KeyCode::ArrowUp,
-        KeyCode::ArrowDown,
-        KeyCode::ArrowLeft,
-        KeyCode::ArrowRight,
-        KeyCode::KeyE,
-        KeyCode::KeyQ,
-    ]);
+    let thrusting = joy.active
+        || keys.any_pressed([
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::KeyE,
+            KeyCode::KeyQ,
+        ]);
     let speed = vel.0.length();
     // Deepest finite-SOI body containing the ship (planets, not the sun).
     let containing = bodies
