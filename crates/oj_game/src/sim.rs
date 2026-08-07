@@ -33,9 +33,18 @@ impl Plugin for SimPlugin {
                 )
                     .chain(),
             )
+            .init_resource::<ViewMode>()
+            .init_resource::<CameraRig>()
             .add_systems(
                 Update,
-                (sync_render_transforms, orient_ship, flame_visibility, camera_zoom),
+                (
+                    sync_render_transforms,
+                    orient_ship,
+                    flame_visibility,
+                    camera_zoom,
+                    toggle_view,
+                    drive_camera.after(sync_render_transforms).after(orient_ship),
+                ),
             );
         #[cfg(debug_assertions)]
         app.add_systems(Update, debug_teleport);
@@ -123,6 +132,27 @@ impl Default for Ship {
 #[derive(Component)]
 pub struct OriginAnchor;
 
+/// Where the pilot is looking from. Tactical is the oblique overview
+/// where planning happens (rings, map, yard); Cockpit is flying it.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum ViewMode {
+    #[default]
+    Tactical,
+    Cockpit,
+}
+
+/// Camera state: tactical zoom persists across mode flips.
+#[derive(Resource)]
+pub struct CameraRig {
+    pub zoom: f32,
+}
+
+impl Default for CameraRig {
+    fn default() -> Self {
+        Self { zoom: 600.0 }
+    }
+}
+
 /// Everything owned by the current solar system — torn down by a jump,
 /// rebuilt by [`spawn_bodies`]. The ship, camera, and UI are NOT scoped.
 #[derive(Component)]
@@ -160,6 +190,69 @@ pub fn orbit_rings(radius: f64, soi: f64) -> Vec<f64> {
         rings.push((radius * 1.5).min(cap).max(radius * 1.2));
     }
     rings
+}
+
+/// A lumpy, banded planetoid mesh: an ico-sphere with seeded radial
+/// displacement (nothing in nature is a perfect sphere) and per-vertex
+/// shading bands (nothing is one flat color). StandardMaterial picks the
+/// vertex colors up automatically.
+fn planetoid_mesh(radius: f32, seed: u64, roughness: f32, shades: [(f32, f32, f32); 3]) -> Mesh {
+    use bevy::mesh::{Mesh, VertexAttributeValues};
+    let mut rng = oj_universe::SplitMix64(seed);
+    // A handful of random plane-wave directions gives smooth value noise
+    // without a noise crate: n(p) = mean(sin(p . k_i + phi_i)).
+    let waves: Vec<(Vec3, f32, f32)> = (0..5)
+        .map(|_| {
+            let dir = Vec3::new(
+                rng.range(-1.0, 1.0) as f32,
+                rng.range(-1.0, 1.0) as f32,
+                rng.range(-1.0, 1.0) as f32,
+            )
+            .normalize_or(Vec3::X);
+            (dir, rng.range(1.5, 4.5) as f32, rng.range(0.0, 6.28) as f32)
+        })
+        .collect();
+    let noise = |p: Vec3| -> f32 {
+        waves
+            .iter()
+            .map(|(d, f, ph)| (p.dot(*d) * f + ph).sin())
+            .sum::<f32>()
+            / waves.len() as f32
+    };
+
+    let mut mesh = Sphere::new(radius).mesh().ico(4).unwrap();
+    let Some(VertexAttributeValues::Float32x3(positions)) =
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION).cloned()
+    else {
+        return mesh;
+    };
+    let mut new_pos = Vec::with_capacity(positions.len());
+    let mut colors = Vec::with_capacity(positions.len());
+    for p in &positions {
+        let v = Vec3::from_array(*p);
+        let unit = v / radius;
+        let n = noise(unit);
+        let bumped = v * (1.0 + roughness * n);
+        new_pos.push(bumped.to_array());
+        // Bands: latitude + noise chooses among three shades.
+        let band = (unit.z * 2.2 + noise(unit * 1.7) * 1.4).sin() * 0.5 + 0.5;
+        let (a, b, c) = if band < 0.4 {
+            (shades[0], shades[1], band / 0.4)
+        } else {
+            (shades[1], shades[2], (band - 0.4) / 0.6)
+        };
+        let t = c.clamp(0.0, 1.0);
+        colors.push([
+            a.0 + (b.0 - a.0) * t,
+            a.1 + (b.1 - a.1) * t,
+            a.2 + (b.2 - a.2) * t,
+            1.0,
+        ]);
+    }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, new_pos);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.compute_smooth_normals();
+    mesh
 }
 
 fn spawn_current_system(
@@ -205,7 +298,8 @@ fn spawn_current_system(
             brightness: 300.0,
             ..default()
         },
-        Transform::from_xyz(0.0, 0.0, 600.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_translation(Vec3::new(0.0, -330.0, 510.0))
+            .looking_at(Vec3::ZERO, Vec3::Z),
     ));
 
     // Distant starfield: anchored to the ship's render frame (the ship is
@@ -230,10 +324,13 @@ fn spawn_current_system(
         }),
     ];
     let mut sky_rng = oj_universe::SplitMix64(0x57A2F1E1D);
-    for _ in 0..520 {
+    for _ in 0..640 {
         let x = sky_rng.range(-4200.0, 4200.0) as f32;
         let y = sky_rng.range(-4200.0, 4200.0) as f32;
-        let z = sky_rng.range(-2400.0, -1200.0) as f32;
+        // Both hemispheres, clear of the play plane: the cockpit horizon
+        // needs stars above it, not only the tactical floor below.
+        let z = sky_rng.range(900.0, 2600.0) as f32
+            * if sky_rng.next_u64() % 2 == 0 { -1.0 } else { 1.0 };
         let scale = sky_rng.range(0.5, 1.8) as f32;
         let mat = star_mats[(sky_rng.next_u64() % 3) as usize].clone();
         commands.spawn((
@@ -360,18 +457,25 @@ pub fn spawn_bodies(
                 },
                 SimPos::default(),
                 BodyVel::default(),
-                Mesh3d(meshes.add(
-                    Sphere::new((planet_radius * RENDER_SCALE) as f32).mesh().ico(3).unwrap(),
-                )),
-                MeshMaterial3d({
+                Mesh3d({
                     let (pr, pg, pb) =
                         PLANET_PALETTE[(system.id.index as usize + i) % PLANET_PALETTE.len()];
-                    materials.add(StandardMaterial {
-                        base_color: Color::srgb(pr, pg, pb),
-                        perceptual_roughness: 0.9,
-                        ..default()
-                    })
+                    meshes.add(planetoid_mesh(
+                        (planet_radius * RENDER_SCALE) as f32,
+                        system.id.index as u64 ^ (i as u64) << 17 ^ 0x9EA7,
+                        0.09,
+                        [
+                            (pr * 0.55, pg * 0.55, pb * 0.6),
+                            (pr, pg, pb),
+                            (pr * 1.25, pg * 1.2, pb * 1.05),
+                        ],
+                    ))
                 }),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::WHITE,
+                    perceptual_roughness: 0.9,
+                    ..default()
+                })),
                 Transform::default(),
             ))
             .id();
@@ -395,9 +499,12 @@ pub fn spawn_bodies(
                 },
                 SimPos::default(),
                 BodyVel::default(),
-                Mesh3d(meshes.add(
-                    Sphere::new((moon_radius * RENDER_SCALE) as f32).mesh().ico(2).unwrap(),
-                )),
+                Mesh3d(meshes.add(planetoid_mesh(
+                    (moon_radius * RENDER_SCALE) as f32,
+                    system.id.index as u64 ^ (i as u64) << 9 ^ (m as u64) << 23 ^ 0x30071,
+                    0.16,
+                    [(0.42, 0.4, 0.38), (0.6, 0.58, 0.55), (0.72, 0.7, 0.66)],
+                ))),
                 MeshMaterial3d(moon_mat.clone()),
                 Transform::default(),
             )).id();
@@ -685,19 +792,65 @@ fn flame_visibility(
     }
 }
 
-/// Mouse-wheel camera zoom, clamped so the HUD scale stays sane.
+/// Mouse-wheel zoom, tactical view only.
 fn camera_zoom(
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
-    mut cameras: Query<&mut Transform, With<Camera3d>>,
+    view: Res<ViewMode>,
+    mut rig: ResMut<CameraRig>,
 ) {
     let scroll: f32 = wheel.read().map(|w| w.y).sum();
-    if scroll == 0.0 {
-        return;
+    if scroll != 0.0 && *view == ViewMode::Tactical {
+        rig.zoom = (rig.zoom * (1.0 - scroll * 0.12)).clamp(160.0, 4000.0);
     }
-    for mut transform in &mut cameras {
-        let z = (transform.translation.z * (1.0 - scroll * 0.12)).clamp(160.0, 4000.0);
-        transform.translation.z = z;
+}
+
+/// F flips between the tactical overview and the cockpit.
+fn toggle_view(keys: Res<ButtonInput<KeyCode>>, mut view: ResMut<ViewMode>) {
+    if keys.just_pressed(KeyCode::KeyF) {
+        *view = match *view {
+            ViewMode::Tactical => ViewMode::Cockpit,
+            ViewMode::Cockpit => ViewMode::Tactical,
+        };
+        info!("view: {:?}", *view);
     }
+}
+
+/// Place the camera each frame. Tactical: an OBLIQUE overview — tilted,
+/// not straight down, so spheres shade and rings sweep in perspective.
+/// Cockpit: just above and behind the hull, looking along the heading —
+/// the orbital plane becomes a horizon.
+fn drive_camera(
+    view: Res<ViewMode>,
+    rig: Res<CameraRig>,
+    ships: Query<&SimVel, With<Ship>>,
+    mut cameras: Query<&mut Transform, (With<Camera3d>, Without<Ship>)>,
+) {
+    let Ok(mut cam) = cameras.single_mut() else { return };
+    let heading = ships
+        .single()
+        .ok()
+        .filter(|v| v.0.length() > 1.0)
+        .map(|v| {
+            let n = v.0.normalized();
+            Vec3::new(n.x as f32, n.y as f32, 0.0)
+        })
+        .unwrap_or(Vec3::Y);
+    let target = match *view {
+        ViewMode::Tactical => {
+            let z = rig.zoom;
+            Transform::from_translation(Vec3::new(0.0, -z * 0.55, z * 0.85))
+                .looking_at(Vec3::ZERO, Vec3::Z)
+        }
+        ViewMode::Cockpit => {
+            let eye = -heading * 26.0 + Vec3::Z * 12.0;
+            Transform::from_translation(eye)
+                .looking_at(heading * 400.0 + Vec3::Z * 2.0, Vec3::Z)
+        }
+    };
+    // Critically damped-ish chase: fast enough to track a dogfight,
+    // soft enough that mode flips glide instead of teleporting.
+    cam.translation = cam.translation.lerp(target.translation, 0.18);
+    cam.rotation = cam.rotation.slerp(target.rotation, 0.18);
 }
 
 /// Dev-only: G teleports the ship next to the first planet, inside its

@@ -133,7 +133,7 @@ impl UiMode {
 }
 
 #[derive(Resource, Default)]
-struct UiLayoutState(Option<UiMode>);
+struct UiLayoutState(Option<(UiMode, crate::sim::ViewMode)>);
 
 /// Marks every UI document root so a relayout can tear the set down.
 #[derive(Component)]
@@ -284,7 +284,7 @@ const HUD_XAML: &str = r##"
     </StackPanel>
   </Border>
 
-  <TextBlock Text="[TAB] VESSEL   [M] MAP   [S] STUDY" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
+  <TextBlock Text="[TAB] VESSEL  [M] MAP  [S] STUDY  [F] COCKPIT" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
 </StackPanel>
 "##;
 
@@ -369,6 +369,47 @@ const PANEL_XAML: &str = r##"
 </Border>
 "##;
 
+// Cockpit HUD: flight-critical only — bars, nav, velocity, threat.
+// Sensors (sun class), meta (score/pilot) and management (yard, map,
+// study) belong to the tactical overview.
+const HUD_COCKPIT_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+           >
+  <Border Background="#F00D131C" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,8" Width="236">
+    <StackPanel>
+      <StackPanel Orientation="Horizontal">
+        <TextBlock Text="ENERGY" Foreground="#00FFD4" FontSize="10" Width="150"/>
+        <TextBlock Text="{Binding energy_text}" Foreground="#00FFD4" FontSize="10"/>
+      </StackPanel>
+      <ProgressBar Width="214" Height="5" Maximum="100" Value="{Binding energy}"
+                   Foreground="#00FFD4" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
+      <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
+        <TextBlock Text="SHIELD" Foreground="#00A2FF" FontSize="10" Width="150"/>
+        <TextBlock Text="{Binding shield_text}" Foreground="#00A2FF" FontSize="10"/>
+      </StackPanel>
+      <ProgressBar Width="214" Height="5" Maximum="100" Value="{Binding shield}"
+                   Foreground="#00A2FF" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
+      <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
+        <TextBlock Text="HULL" Foreground="#FF7043" FontSize="10" Width="150"/>
+        <TextBlock Text="{Binding hull_text}" Foreground="#FF7043" FontSize="10"/>
+      </StackPanel>
+      <ProgressBar Width="214" Height="5" Maximum="100" Value="{Binding hull}"
+                   Foreground="#FF7043" Background="#0A1420" BorderBrush="#16222E" Margin="0,3,0,0"/>
+    </StackPanel>
+  </Border>
+  <Border Background="#F00D131C" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,8" Width="236" Margin="0,8,0,0">
+    <StackPanel>
+      <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10"/>
+      <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="10"/>
+      <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="17" FontWeight="Bold" Margin="0,4,0,0"/>
+    </StackPanel>
+  </Border>
+  <TextBlock Text="[F] TACTICAL   [Z] LASER  [X] MSL  [C/V] WELLS" Foreground="#3A4650" FontSize="10" Margin="2,8,0,0"/>
+</StackPanel>
+"##;
+
 const MAP_XAML: &str = r##"
 <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -426,7 +467,19 @@ const TOUCH_TOPBAR_XAML: &str = r##"
   <Button x:Name="btn_map" Content="MAP" Background="#D80B1B22" BorderBrush="#00E5FF"
           Foreground="#00E5FF" FontSize="12" Padding="12,10" Margin="0,0,6,0"/>
   <Button x:Name="btn_study" Content="STUDY" Background="#D80B1B22" BorderBrush="#FFB454"
-          Foreground="#FFB454" FontSize="12" Padding="12,10"/>
+          Foreground="#FFB454" FontSize="12" Padding="12,10" Margin="0,0,6,0"/>
+  <Button x:Name="btn_view" Content="VIEW" Background="#D80B1B22" BorderBrush="#B48CFF"
+          Foreground="#B48CFF" FontSize="12" Padding="12,10"/>
+</StackPanel>
+"##;
+
+const TOUCH_TOPBAR_COCKPIT_XAML: &str = r##"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0"
+            Orientation="Horizontal">
+  <Button x:Name="btn_view" Content="VIEW" Background="#D80B1B22" BorderBrush="#B48CFF"
+          Foreground="#B48CFF" FontSize="12" Padding="12,10"/>
 </StackPanel>
 "##;
 
@@ -469,7 +522,8 @@ const TOUCH_WEAPONS_XAML: &str = r##"
 "##;
 
 /// btn_* name -> virtual key, for wiring TouchKey after instantiation.
-const TOUCH_KEYS: [(&str, KeyCode); 11] = [
+const TOUCH_KEYS: [(&str, KeyCode); 12] = [
+    ("btn_view", KeyCode::KeyF),
     ("btn_vessel", KeyCode::Tab),
     ("btn_map", KeyCode::KeyM),
     ("btn_study", KeyCode::KeyS),
@@ -614,11 +668,12 @@ fn relayout_ui(world: &mut World) {
         return;
     };
     let mode = UiMode::of(w, h);
-    if world.resource::<UiLayoutState>().0 == Some(mode) {
+    let view = *world.resource::<crate::sim::ViewMode>();
+    if world.resource::<UiLayoutState>().0 == Some((mode, view)) {
         return;
     }
-    world.resource_mut::<UiLayoutState>().0 = Some(mode);
-    info!("ui layout: {mode:?} ({w:.0}x{h:.0})");
+    world.resource_mut::<UiLayoutState>().0 = Some((mode, view));
+    info!("ui layout: {mode:?} / {view:?} ({w:.0}x{h:.0})");
 
     // Tear down the previous layout's documents.
     let old: Vec<Entity> = world
@@ -636,13 +691,24 @@ fn relayout_ui(world: &mut World) {
         Map,
         Controls,
     }
-    let mut docs = vec![
-        (m.fill(HUD_XAML), Doc::Hud),
-        (m.fill(PANEL_XAML), Doc::Vessel),
-        (m.fill(MAP_XAML), Doc::Map),
-    ];
+    // The audit that decides what lives where: tactical carries the
+    // management surface (sensors, meta, yard, map); the cockpit carries
+    // only flight and fight.
+    let cockpit = view == crate::sim::ViewMode::Cockpit;
+    let mut docs = if cockpit {
+        world.remove_resource::<VesselPanel>();
+        world.remove_resource::<MapPanel>();
+        vec![(m.fill(HUD_COCKPIT_XAML), Doc::Hud)]
+    } else {
+        vec![
+            (m.fill(HUD_XAML), Doc::Hud),
+            (m.fill(PANEL_XAML), Doc::Vessel),
+            (m.fill(MAP_XAML), Doc::Map),
+        ]
+    };
     if m.touch_controls {
-        docs.push((m.fill(TOUCH_TOPBAR_XAML), Doc::Controls));
+        let topbar = if cockpit { TOUCH_TOPBAR_COCKPIT_XAML } else { TOUCH_TOPBAR_XAML };
+        docs.push((m.fill(topbar), Doc::Controls));
         docs.push((m.fill(TOUCH_THRUST_XAML), Doc::Controls));
         docs.push((m.fill(TOUCH_WEAPONS_XAML), Doc::Controls));
     }
