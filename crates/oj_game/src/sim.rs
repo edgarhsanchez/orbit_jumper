@@ -706,10 +706,27 @@ pub fn spawn_ship(
         metallic: 0.2,
         ..default()
     });
-    let flame_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.6, 0.15),
-        emissive: LinearRgba::rgb(14.0, 5.0, 0.8),
+    // Fire in three layers, hottest innermost. Alpha-blended so the
+    // plume overlaps softly; bloom turns the emissives into glow.
+    let flame_outer = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.45, 0.1, 0.55),
+        emissive: LinearRgba::rgb(9.0, 2.8, 0.4),
         unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    let flame_mid = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.75, 0.25, 0.75),
+        emissive: LinearRgba::rgb(14.0, 7.0, 1.2),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    let flame_core = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.98, 0.85, 0.95),
+        emissive: LinearRgba::rgb(22.0, 18.0, 10.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
         ..default()
     });
 
@@ -811,15 +828,26 @@ pub fn spawn_ship(
                         .with_rotation(Quat::from_rotation_z(rot)),
                 ));
             }
-            // Exhaust flame, pointing aft; bloom does the glow.
-            ship.spawn((
-                EngineFlame,
-                Mesh3d(meshes.add(Cone::new(3.0, 11.0).mesh().resolution(10))),
-                MeshMaterial3d(flame_mat),
-                Transform::from_xyz(0.0, -16.5, 0.0)
-                    .with_rotation(Quat::from_rotation_z(std::f32::consts::PI)),
-                Visibility::Hidden,
-            ));
+            // Exhaust fire in layers, each flickering out of phase (the
+            // fx module drives scale jitter) so the fire reads as alive.
+            for (mat, radius, len, y, phase) in [
+                (flame_outer, 3.2, 12.5, -17.2, 0.0f32),
+                (flame_mid, 2.1, 9.5, -15.9, 2.1),
+                (flame_core, 1.1, 6.5, -14.6, 4.4),
+            ] {
+                ship.spawn((
+                    EngineFlame,
+                    crate::fx::FlameFlicker {
+                        phase,
+                        base_scale: Vec3::ONE,
+                    },
+                    Mesh3d(meshes.add(Cone::new(radius, len).mesh().resolution(10))),
+                    MeshMaterial3d(mat),
+                    Transform::from_xyz(0.0, y, 0.0)
+                        .with_rotation(Quat::from_rotation_z(std::f32::consts::PI)),
+                    Visibility::Hidden,
+                ));
+            }
         });
 }
 
@@ -1096,13 +1124,9 @@ fn harvest_and_hazard(
     let dt = DT * TIME_WARP;
     for (mut ship, pos) in &mut ships {
         let r = pos.0.distance(sun_pos.0);
-        // Harvest falls off with square of distance from the hazard edge.
-        let harvest_edge = sun.hazard_radius * 8.0;
-        if r < harvest_edge {
-            let closeness = (harvest_edge / r.max(1.0)).min(8.0);
-            let rate = sun.class.harvest_rate() * closeness * 0.05;
-            ship.energy = (ship.energy + rate * dt).min(ship.energy_max);
-        }
+        // No ambient trickle: refueling means riding an orbit or
+        // deploying the solar arm (solar.rs). Proximity used to pour
+        // energy in for free, which made the whole economy cosmetic.
         if r < sun.hazard_radius && ship.shield_tier < sun.class.required_shield_tier() {
             let proximity = sun.hazard_radius / r.max(1.0);
             let dps = sun.class.hazard_dps() * proximity * 0.02;
@@ -1117,7 +1141,11 @@ fn harvest_and_hazard(
                 }
             }
         } else if ship.shield < 100.0 {
-            ship.shield = (ship.shield + 0.5 * dt).min(100.0);
+            // Slow recovery in REAL seconds. The old warp-scaled rate
+            // (+300/s) refilled the field between enemy volleys, which
+            // made shields look indestructible — enemy fire has to be
+            // able to grind them down faster than they knit.
+            ship.shield = (ship.shield + 0.5 * DT).min(100.0);
         }
     }
 }

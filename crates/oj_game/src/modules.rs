@@ -220,6 +220,15 @@ fn spawn_wrecks(
         career.ships_lost += 1;
         career.absorb(&run);
         *run = RunScore::default();
+        // Going down IS an event — the biggest fireball in the game.
+        crate::fx::spawn_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            death.at,
+            oj_orbits::Vec3d::ZERO,
+            26.0,
+        );
         // The lost ship becomes claimable scrap, scattered near the wreck.
         let mesh = meshes.add(Cuboid::new(4.0, 4.0, 4.0).mesh());
         let mat = materials.add(StandardMaterial {

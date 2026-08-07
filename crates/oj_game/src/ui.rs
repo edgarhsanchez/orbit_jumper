@@ -102,6 +102,7 @@ struct HudVm {
     contacts: Vec<ContactVm>,
     weapon_hints: String,
     target: String,
+    arm: String,
 }
 
 #[derive(Resource, Clone)]
@@ -274,6 +275,7 @@ const HUD_XAML: &str = r##"
   <Border Background="#F00D131C" BorderBrush="#1E3A44" BorderThickness="1" Padding="10,8" Width="236" Margin="0,8,0,0">
     <StackPanel>
       <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10"/>
+      <TextBlock Text="{Binding arm}" Foreground="#FFB454" FontSize="10"/>
       <TextBlock Text="{Binding threat}" Foreground="#FF5459" FontSize="10"/>
       <TextBlock Text="VELOCITY" Foreground="#5A6472" FontSize="10" Margin="0,6,0,0"/>
       <TextBlock Text="{Binding speed}" Foreground="#E0E2EB" FontSize="17" FontWeight="Bold"/>
@@ -442,6 +444,8 @@ const COCKPIT_CONSOLE_XAML: &str = r##"
                HorizontalAlignment="Center"/>
     <TextBlock Text="{Binding nav}" Foreground="#00E5FF" FontSize="10" Margin="0,2,0,0"/>
     <TextBlock Text="{Binding target}" Foreground="#FF5459" FontSize="10" Margin="0,2,0,0"
+               HorizontalAlignment="Center"/>
+    <TextBlock Text="{Binding arm}" Foreground="#FFB454" FontSize="10" Margin="0,2,0,0"
                HorizontalAlignment="Center"/>
   </StackPanel>
 </Border>
@@ -786,6 +790,14 @@ const TOUCH_THRUST_XAML: &str = r##"
       </StackPanel>
     </Button>
       </StackPanel>
+      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+    <Button x:Name="btn_arm" Style="{StaticResource con-teal}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="SOLAR" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="ARM P" Foreground="#3E6A66" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+      </StackPanel>
     </StackPanel>
   </Border>
 </StackPanel>
@@ -1023,7 +1035,7 @@ impl Armament {
 
     /// The cockpit hint line only advertises what is actually installed.
     fn hints(&self) -> String {
-        let mut s = String::from("[F] TACTICAL  [E/Q] VERT");
+        let mut s = String::from("[F] TACTICAL  [E/Q] VERT  [P] SOLAR");
         if self.laser {
             s.push_str("  [Z] LASER");
         }
@@ -1038,8 +1050,9 @@ impl Armament {
 }
 
 /// btn_* name -> virtual key, for wiring TouchKey after instantiation.
-const TOUCH_KEYS: [(&str, KeyCode); 11] = [
+const TOUCH_KEYS: [(&str, KeyCode); 12] = [
     ("btn_exit_orbit", KeyCode::KeyO),
+    ("btn_arm", KeyCode::KeyP),
     ("btn_view", KeyCode::KeyF),
     ("btn_climb", KeyCode::KeyE),
     ("btn_dive", KeyCode::KeyQ),
@@ -1398,7 +1411,7 @@ fn update_hud(
     achieved: Res<crate::achievements::Unlocked>,
     flash: Res<crate::achievements::LastUnlock>,
     // Grouped: bevy caps a system at 16 parameters.
-    (game, atlas, style_res, raider_q, mut map_rows, lock): (
+    (game, atlas, style_res, raider_q, mut map_rows, lock, arm): (
         Res<crate::GameUniverse>,
         Res<crate::travel::SunAtlas>,
         Res<crate::sim::ShipStyle>,
@@ -1414,6 +1427,7 @@ fn update_hud(
         >,
         ResMut<crate::travel::MapRows>,
         Res<crate::weapons::TargetLock>,
+        Res<crate::solar::SolarArm>,
     ),
 ) {
     let (Some(model), Ok((ship, vel, nav, ship_pos))) = (model, ships.single()) else {
@@ -1530,6 +1544,12 @@ fn update_hud(
     model.0.set_contacts(contacts.into_iter().map(|(_, c)| c).take(6).collect());
     model.0.set_target(target_line);
     model.0.set_weapon_hints(Armament::of(&ship_upgrades).hints());
+    model.0.set_arm(match arm.phase {
+        crate::solar::ArmPhase::Stowed => String::new(),
+        crate::solar::ArmPhase::Deploying => ">> SOLAR ARM EXTENDING — WEAPONS OFFLINE".into(),
+        crate::solar::ArmPhase::Deployed => ">> SOLAR ARM DEPLOYED — CHARGING · WEAPONS OFFLINE".into(),
+        crate::solar::ArmPhase::Retracting => ">> SOLAR ARM STOWING — WEAPONS OFFLINE".into(),
+    });
     if let Ok(sun) = suns.single() {
         model.0.set_sun_class(if study.revealed {
             format!(

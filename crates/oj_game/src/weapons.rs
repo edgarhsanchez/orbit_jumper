@@ -247,6 +247,7 @@ fn fire_weapons(
     mut cd: ResMut<Cooldowns>,
     upgrades: Res<ShipUpgrades>,
     lock: Res<TargetLock>,
+    arm: Res<crate::solar::SolarArm>,
     mut run: ResMut<RunScore>,
     mut ships: Query<(&mut Ship, &SimPos, &SimVel)>,
     mut drones: Query<(Entity, &SimPos, &mut Hull)>,
@@ -257,6 +258,10 @@ fn fire_weapons(
     cd.laser = (cd.laser - DT).max(0.0);
     cd.missile = (cd.missile - DT).max(0.0);
     cd.well = (cd.well - DT).max(0.0);
+    // A deployed solar arm sits in the weapon train: stow it first.
+    if !arm.weapons_free() {
+        return;
+    }
     let Ok((mut ship, pos, vel)) = ships.single_mut() else { return };
 
     // Target priority: the locked vessel when it is in reach, otherwise
@@ -287,31 +292,43 @@ fn fire_weapons(
                 hull.hp -= 10.0 * 1.5f64.powi(laser_tier as i32 - 1);
                 run.score_hit();
             }
-            // The beam itself: a camera-space sliver from ship to victim,
-            // gone in a tenth of a second. Hitscan needs muzzle light or
-            // combat reads as nothing happening.
+            // The beam itself, in two layers: a white-hot core and a
+            // wider red glow sheath, plus an impact flash where it
+            // lands. Hitscan needs light or combat reads as nothing.
             let to_target = victim_pos - pos.0;
             let len = (to_target.length() * RENDER_SCALE) as f32;
             let dir3 = Vec3::new(to_target.x as f32, to_target.y as f32, to_target.z as f32)
                 .normalize_or_zero();
-            commands.spawn((
-                SystemScoped,
-                LaserBeam { ttl: 0.12 },
-                SimPos(pos.0 + to_target * 0.5),
-                Mesh3d(meshes.add(Cuboid::new(0.7, 1.0, 0.7).mesh())),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.3, 0.3),
-                    emissive: LinearRgba::rgb(4.0, 0.6, 0.6),
-                    unlit: true,
-                    ..default()
-                })),
-                Transform {
-                    rotation: Quat::from_rotation_arc(Vec3::Y, dir3),
-                    scale: Vec3::new(1.0, len, 1.0),
-                    ..default()
-                },
-                bevy::picking::Pickable::IGNORE,
-            ));
+            let rotation = Quat::from_rotation_arc(Vec3::Y, dir3);
+            for (w, color, glow, a) in [
+                (0.5, (1.0, 0.85, 0.8), LinearRgba::rgb(9.0, 3.5, 3.0), 0.95),
+                (1.5, (1.0, 0.25, 0.25), LinearRgba::rgb(3.5, 0.4, 0.4), 0.35),
+            ] {
+                commands.spawn((
+                    SystemScoped,
+                    LaserBeam { ttl: 0.12 },
+                    SimPos(pos.0 + to_target * 0.5),
+                    Mesh3d(meshes.add(Cuboid::new(w, 1.0, w).mesh())),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgba(color.0, color.1, color.2, a),
+                        emissive: glow,
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        ..default()
+                    })),
+                    Transform { rotation, scale: Vec3::new(1.0, len, 1.0), ..default() },
+                    bevy::picking::Pickable::IGNORE,
+                ));
+            }
+            crate::fx::spawn_impact_flash(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                victim_pos,
+                Vec3d::ZERO,
+                6.0,
+                LinearRgba::rgb(7.0, 1.6, 1.2),
+            );
         }
     }
 
@@ -379,6 +396,8 @@ fn fly_missiles(
     mut missiles: Query<(Entity, &mut Missile, &mut SimPos, &mut SimVel), Without<Hull>>,
     mut drones: Query<(Entity, &SimPos, &mut Hull), Without<Missile>>,
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let dt = DT * TIME_WARP;
     for (entity, mut missile, mut pos, mut vel) in &mut missiles {
@@ -401,12 +420,20 @@ fn fly_missiles(
         }
         oj_orbits::integrate_step(&mut pos.0, &mut vel.0, accel, dt);
 
-        // Proximity fuse.
+        // Proximity fuse — detonation gets a real fireball.
         if let Some(target) = missile.target
             && let Ok((_, tpos, mut hull)) = drones.get_mut(target)
             && tpos.0.distance(pos.0) < 2.0e8
         {
             hull.hp -= missile.damage;
+            crate::fx::spawn_explosion(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                pos.0,
+                Vec3d::ZERO,
+                9.0,
+            );
             commands.entity(entity).despawn();
         }
     }
@@ -476,7 +503,25 @@ fn reap_hulls(
         run.kills += 1;
         // Kill credit scales with the victim's bounty, which scales with
         // its difficulty tier — bosses and elites pay what they cost.
-        run.combat_score += bounty.map_or(25, |b| b.0) * 12;
+        let bounty_value = bounty.map_or(25, |b| b.0);
+        run.combat_score += bounty_value * 12;
+        // The kill is an event; give it a fireball to match its worth —
+        // drones pop, raiders blow, a dreadnought goes up like a depot.
+        let blast = if bounty_value >= 1000 {
+            34.0
+        } else if bounty_value >= 100 {
+            16.0
+        } else {
+            10.0
+        };
+        crate::fx::spawn_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            pos.0,
+            Vec3d::ZERO,
+            blast,
+        );
         commands.entity(entity).despawn();
         let mesh = meshes.add(Cuboid::new(3.0, 3.0, 3.0).mesh());
         let mat = materials.add(StandardMaterial {

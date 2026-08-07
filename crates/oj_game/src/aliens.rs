@@ -518,10 +518,13 @@ fn project_trajectories(
 
 /// Bolts fly straight, expire, and burst on the ship: shields first,
 /// then hull — the same order the sun burns in.
+#[allow(clippy::type_complexity)]
 fn fly_bolts(
     mut bolts: Query<(Entity, &mut AlienBolt, &mut SimPos, &SimVel)>,
-    mut ships: Query<(&mut Ship, &SimPos), Without<AlienBolt>>,
+    mut ships: Query<(&mut Ship, &SimPos, &SimVel), (Without<AlienBolt>, With<crate::sim::OriginAnchor>)>,
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let dt = DT * TIME_WARP;
     for (entity, mut bolt, mut pos, vel) in &mut bolts {
@@ -531,18 +534,47 @@ fn fly_bolts(
             continue;
         }
         pos.0 += vel.0 * dt;
-        if let Ok((mut ship, ship_pos)) = ships.single_mut()
+        if let Ok((mut ship, ship_pos, ship_vel)) = ships.single_mut()
             && ship_pos.0.distance(pos.0) < BOLT_FUSE
         {
             let dmg = bolt.damage;
-            if ship.shield > 0.0 {
-                ship.shield = (ship.shield - dmg).max(0.0);
-            } else {
-                ship.hull = (ship.hull - dmg).max(0.0);
+            // Where the bolt came from, for the directional flare.
+            let strike_dir = (pos.0 - ship_pos.0).normalized();
+            // The field absorbs what it can — costing the reactor — and
+            // the REST burns through to the hull. A sliver of regenerated
+            // shield must not eat a whole bolt.
+            let absorbed = dmg.min(ship.shield);
+            let through = dmg - absorbed;
+            if absorbed > 0.0 {
+                ship.shield -= absorbed;
+                ship.energy = (ship.energy - absorbed * 0.6).max(0.0);
+                // The force field glows on the SIDE it was struck.
+                crate::fx::spawn_shield_flare(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    ship_pos.0,
+                    ship_vel.0,
+                    strike_dir,
+                    16.0,
+                );
+            }
+            if through > 0.0 {
+                ship.hull = (ship.hull - through).max(0.0);
+                // Bare hull: sparks, not glow.
+                crate::fx::spawn_impact_flash(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    ship_pos.0 + strike_dir * (10.0 / crate::sim::RENDER_SCALE),
+                    ship_vel.0,
+                    5.0,
+                    LinearRgba::rgb(6.0, 3.0, 0.8),
+                );
             }
             info!(
-                "bolt hit: shield {:.0}, hull {:.0}",
-                ship.shield, ship.hull
+                "bolt hit: shield {:.0}, hull {:.0}, energy {:.0}",
+                ship.shield, ship.hull, ship.energy
             );
             commands.entity(entity).despawn();
         }
