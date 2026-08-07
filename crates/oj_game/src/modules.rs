@@ -215,8 +215,10 @@ fn spawn_wrecks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     for death in events.read() {
+        sfx.write(crate::audio::Sfx::Explosion);
         career.ships_lost += 1;
         career.absorb(&run);
         *run = RunScore::default();
@@ -263,12 +265,14 @@ fn collect_wrecks(
     mut run: ResMut<RunScore>,
     mut stash: ResMut<Stash>,
     mut commands: Commands,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     let Ok(ship_pos) = ships.single() else { return };
     for (entity, wreck, pos) in &wrecks {
         if pos.0.distance(ship_pos.0) < COLLECT_RADIUS {
             run.salvage_value += wreck.value;
             *stash.0.entry(wreck.element).or_default() += 1;
+            sfx.write(crate::audio::Sfx::Salvage);
             commands.entity(entity).despawn();
         }
     }

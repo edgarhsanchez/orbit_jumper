@@ -17,6 +17,7 @@ use oj_universe::{SectorCoord, SystemId, Universe};
 
 mod achievements;
 mod aliens;
+mod audio;
 mod comets;
 mod command;
 mod modules;
@@ -71,6 +72,7 @@ fn main() {
         .add_plugins((upgrades::UpgradesPlugin, weapons::WeaponsPlugin, achievements::AchievementsPlugin))
         .add_plugins((travel::TravelPlugin, aliens::AliensPlugin, stick::StickPlugin))
         .add_plugins((fx::FxPlugin, solar::SolarPlugin, comets::CometPlugin))
+        .add_plugins(audio::GameAudioPlugin)
         .run();
 }
 

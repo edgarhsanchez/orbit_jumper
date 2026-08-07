@@ -525,6 +525,7 @@ fn fly_bolts(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     let dt = DT * TIME_WARP;
     for (entity, mut bolt, mut pos, vel) in &mut bolts {
@@ -548,6 +549,7 @@ fn fly_bolts(
             if absorbed > 0.0 {
                 ship.shield -= absorbed;
                 ship.energy = (ship.energy - absorbed * 0.6).max(0.0);
+                sfx.write(crate::audio::Sfx::ShieldHit);
                 // The force field glows on the SIDE it was struck.
                 crate::fx::spawn_shield_flare(
                     &mut commands,
@@ -561,6 +563,7 @@ fn fly_bolts(
             }
             if through > 0.0 {
                 ship.hull = (ship.hull - through).max(0.0);
+                sfx.write(crate::audio::Sfx::HullHit);
                 // Bare hull: sparks, not glow.
                 crate::fx::spawn_impact_flash(
                     &mut commands,

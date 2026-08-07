@@ -1,12 +1,13 @@
 //! The orbit command — the game's core traversal verb.
 //!
-//! Click and HOLD a celestial body: if the ship is within command range
-//! (upgradeable), a hold timer fills and the ship begins a guided transfer
-//! into orbit around the target. Propulsion is deliberately weak against
-//! interplanetary distances, so getting anywhere means hitching rides:
-//! orbit a planet and it carries you around the system; dive past one in
-//! free flight and its gravity — real, integrated — slings you out faster.
-//! Assists are detected and scored.
+//! Click a ride ring (or the body itself, for its innermost ring): if
+//! the ring is within command range (upgradeable), the ship begins a
+//! guided transfer into that orbit immediately — one click, one command.
+//! Propulsion is deliberately weak against interplanetary distances, so
+//! getting anywhere means hitching rides: orbit a planet and it carries
+//! you around the system; dive past one in free flight and its gravity —
+//! real, integrated — slings you out faster. Assists are detected and
+//! scored.
 
 use bevy::picking::events::{Pointer, Press, Release};
 use bevy::prelude::*;
@@ -15,9 +16,6 @@ use oj_orbits::Vec3d;
 use crate::modules::RunScore;
 use crate::sim::{BodyVel, CelestialBody, DT, OrbitRing, Ship, TIME_WARP, orbit_rings};
 use crate::{SimPos, SimVel};
-
-/// Seconds of hold to issue an orbit command.
-const HOLD_SECONDS: f64 = 1.2;
 
 /// Ship navigation mode.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
@@ -43,34 +41,13 @@ const ORBIT_SPEED_RATE: f64 = 0.9;
 /// Riding an orbit recharges the tank, real seconds.
 const ORBIT_ENERGY_REGEN: f64 = 1.5;
 
-/// The in-progress click-and-hold, if any.
+/// Feedback state for the last press on a ring that could NOT be
+/// commanded — the HUD shows "out of range" until the button lifts.
 #[derive(Resource, Default)]
 pub struct CommandHold {
     pub target: Option<Entity>,
-    /// The ride orbit being commanded, sim meters (the clicked ring's
-    /// radius, or the innermost ring for a click on the body itself).
-    pub ride_r: f64,
-    pub progress: f64,
     pub out_of_range: bool,
 }
-
-/// Tap bookkeeping for double-tap detection. One physical tap can press
-/// SEVERAL entities (overlapping ring bands all under the cursor fire
-/// their own events, in varying order), so taps are grouped into bursts
-/// and a double is "this burst touches a ring the previous burst also
-/// touched".
-#[derive(Resource, Default)]
-struct LastTap {
-    cur: Vec<Entity>,
-    cur_at: f64,
-    prev: Vec<Entity>,
-    prev_at: f64,
-}
-
-/// Two taps on the same ring inside this window = jump now, no hold.
-const DOUBLE_TAP_S: f64 = 0.4;
-/// Press events closer together than this are one physical tap.
-const TAP_BURST_S: f64 = 0.05;
 
 /// Slingshot detection state.
 #[derive(Resource, Default)]
@@ -84,27 +61,21 @@ pub struct CommandPlugin;
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CommandHold>()
-            .init_resource::<LastTap>()
             .init_resource::<AssistTracker>()
             .add_observer(on_press)
             .add_observer(on_release)
-            .add_systems(
-                FixedUpdate,
-                (tick_hold, guide_nav, track_assists).chain(),
-            );
+            .add_systems(FixedUpdate, (guide_nav, track_assists).chain());
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn on_press(
     ev: On<Pointer<Press>>,
-    time: Res<Time>,
     rings: Query<&OrbitRing>,
     celestials: Query<&CelestialBody>,
     body_pos: Query<&SimPos, (With<CelestialBody>, Without<Ship>)>,
     mut ships: Query<(&Ship, &SimPos, &mut NavState), With<Ship>>,
     mut hold: ResMut<CommandHold>,
-    mut last_tap: ResMut<LastTap>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     // Every press, in the log: the cheapest possible probe of whether the
     // picking pipeline is delivering events at all (it has silently died
@@ -120,89 +91,41 @@ fn on_press(
             .ok()
             .map(|b| (ev.entity, orbit_rings(b.radius, b.soi)[0]))
     };
+    // Presses that miss every pickable land on the window entity and
+    // resolve to nothing — normal, not an error.
     let Some((target, ride_r)) = picked else { return };
-
-    // Double-tap on a ring you are NOT riding = jump immediately, no
-    // hold. Same range rule as the hold: measured to the ring, so a
-    // giant's overlapping band still counts as "close".
-    let now = time.elapsed_secs_f64();
-    if now - last_tap.cur_at > TAP_BURST_S {
-        // A new physical tap begins; the previous burst slides back.
-        last_tap.prev = std::mem::take(&mut last_tap.cur);
-        last_tap.prev_at = last_tap.cur_at;
-        last_tap.cur_at = now;
+    let Ok((ship, ship_pos, mut nav)) = ships.single_mut() else { return };
+    // Pressing the ring you already ride is a no-op.
+    if matches!(
+        *nav,
+        NavState::Orbiting { body, ride_r: r, .. } if body == target && r == ride_r
+    ) {
+        return;
     }
-    last_tap.cur.push(ev.entity);
-    let double = last_tap.cur_at - last_tap.prev_at < DOUBLE_TAP_S
-        && last_tap.prev.contains(&ev.entity);
-    if double
-        && let Ok((ship, ship_pos, mut nav)) = ships.single_mut()
-    {
-        let already_riding = matches!(
-            *nav,
-            NavState::Orbiting { body, ride_r: r, .. } if body == target && r == ride_r
-        );
-        if !already_riding
-            && let Ok(bp) = body_pos.get(target)
-        {
-            let d = ship_pos.0.distance(bp.0);
-            let to_ring = (d - ride_r).abs().min(d);
-            if to_ring <= ship.command_range {
-                *nav = NavState::Transfer { target, ride_r };
-                hold.target = None;
-                hold.progress = 0.0;
-                info!("double-tap jump: transfer commanded");
-                return;
-            }
-            // Out of reach: let the HUD say so for the tap's duration.
-            hold.target = Some(target);
-            hold.ride_r = ride_r;
-            hold.progress = 0.0;
-            hold.out_of_range = true;
-            return;
-        }
+    let Ok(bp) = body_pos.get(target) else { return };
+    // Range is measured to the ORBIT, not the body's center: a giant's
+    // outer ring can pass close enough to leap onto while the body
+    // itself sits far outside command range.
+    let d = ship_pos.0.distance(bp.0);
+    let to_ring = (d - ride_r).abs().min(d);
+    if to_ring <= ship.command_range {
+        // One click, one command: the transfer starts NOW.
+        *nav = NavState::Transfer { target, ride_r };
+        hold.target = None;
+        hold.out_of_range = false;
+        sfx.write(crate::audio::Sfx::Click);
+        info!("orbit commanded: transfer to ride_r {ride_r:.3e}");
+    } else {
+        // Out of reach: let the HUD say so until the button lifts.
+        hold.target = Some(target);
+        hold.out_of_range = true;
+        info!("orbit out of range: {:.3e} > {:.3e}", to_ring, ship.command_range);
     }
-
-    hold.target = Some(target);
-    hold.ride_r = ride_r;
-    hold.progress = 0.0;
-    hold.out_of_range = false;
 }
 
 fn on_release(_ev: On<Pointer<Release>>, mut hold: ResMut<CommandHold>) {
     hold.target = None;
-    hold.progress = 0.0;
-}
-
-fn tick_hold(
-    mut hold: ResMut<CommandHold>,
-    bodies: Query<(&CelestialBody, &SimPos)>,
-    mut ships: Query<(&Ship, &SimPos, &mut NavState)>,
-) {
-    let Some(target) = hold.target else { return };
-    let (Ok((_, body_pos)), Ok((ship, ship_pos, mut nav))) =
-        (bodies.get(target), ships.single_mut())
-    else {
-        hold.target = None;
-        return;
-    };
-    // Range is measured to the ORBIT, not the body's center: a giant's
-    // outer ring can pass close enough to leap onto while the body
-    // itself sits far outside command range.
-    let d = ship_pos.0.distance(body_pos.0);
-    let to_ring = (d - hold.ride_r).abs().min(d);
-    if to_ring > ship.command_range {
-        hold.out_of_range = true;
-        hold.progress = 0.0;
-        return;
-    }
     hold.out_of_range = false;
-    hold.progress += DT / HOLD_SECONDS;
-    if hold.progress >= 1.0 {
-        *nav = NavState::Transfer { target, ride_r: hold.ride_r };
-        hold.target = None;
-        hold.progress = 0.0;
-    }
 }
 
 fn guide_nav(
@@ -210,6 +133,7 @@ fn guide_nav(
     joy: Res<crate::stick::JoyInput>,
     bodies: Query<(&CelestialBody, &SimPos, &BodyVel)>,
     mut ships: Query<(&mut Ship, &SimPos, &mut SimVel, &mut NavState)>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     let Ok((mut ship, pos, mut vel, mut nav)) = ships.single_mut() else { return };
     let manual = joy.active
@@ -324,6 +248,7 @@ fn guide_nav(
                 ride_r,
                 speed: ship.orbit_boost * dir,
             };
+            sfx.write(crate::audio::Sfx::OrbitLock);
         }
     }
 }

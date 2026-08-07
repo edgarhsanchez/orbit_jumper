@@ -626,6 +626,7 @@ pub fn spawn_bodies(
                 ..default()
             })),
             Transform::default(),
+            bevy::picking::Pickable::IGNORE,
         ));
     }
 }
@@ -1000,26 +1001,36 @@ fn flame_visibility(
 }
 
 /// Zoom, tactical view only: mouse wheel, or hold [-]/[=] for pilots
-/// (and test rigs) without one.
+/// (and test rigs) without one. The zoom-out ceiling scales with the
+/// orbit being ridden (or transferred to): a big ride deserves a view
+/// wide enough to see where it is taking you.
 fn camera_zoom(
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     view: Res<ViewMode>,
+    ships: Query<&crate::command::NavState, With<Ship>>,
     mut rig: ResMut<CameraRig>,
 ) {
     let scroll: f32 = wheel.read().map(|w| w.y).sum();
     if *view != ViewMode::Tactical {
         return;
     }
+    let ceiling = match ships.single().ok() {
+        Some(
+            crate::command::NavState::Orbiting { ride_r, .. }
+            | crate::command::NavState::Transfer { ride_r, .. },
+        ) => 4000.0_f32.max((*ride_r * RENDER_SCALE) as f32 * 2.5),
+        _ => 4000.0,
+    };
     if scroll != 0.0 {
-        rig.zoom = (rig.zoom * (1.0 - scroll * 0.12)).clamp(160.0, 4000.0);
+        rig.zoom = (rig.zoom * (1.0 - scroll * 0.12)).clamp(160.0, ceiling);
     }
     // Held keys triple the zoom per second, frame-rate independent.
     let held = keys.pressed(KeyCode::Minus) as i8 - keys.pressed(KeyCode::Equal) as i8;
     if held != 0 {
         let factor = 3.0f32.powf(time.delta_secs() * held as f32);
-        rig.zoom = (rig.zoom * factor).clamp(160.0, 4000.0);
+        rig.zoom = (rig.zoom * factor).clamp(160.0, ceiling);
     }
 }
 

@@ -254,6 +254,7 @@ fn fire_weapons(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     cd.laser = (cd.laser - DT).max(0.0);
     cd.missile = (cd.missile - DT).max(0.0);
@@ -291,6 +292,7 @@ fn fire_weapons(
                 cd.laser = LASER_COOLDOWN;
                 hull.hp -= 10.0 * 1.5f64.powi(laser_tier as i32 - 1);
                 run.score_hit();
+                sfx.write(crate::audio::Sfx::Laser);
             }
             // The beam itself, in two layers: a white-hot core and a
             // wider red glow sheath, plus an impact flash where it
@@ -337,6 +339,7 @@ fn fire_weapons(
     if keys.just_pressed(KeyCode::KeyX) && missile_tier > 0 && cd.missile == 0.0 && ship.energy >= 10.0 {
         ship.energy -= 10.0;
         cd.missile = MISSILE_COOLDOWN;
+        sfx.write(crate::audio::Sfx::Missile);
         let target = prefer(f64::INFINITY, &drones);
         commands.spawn((
             SystemScoped,
@@ -363,6 +366,7 @@ fn fire_weapons(
         if keys.just_pressed(key) && ff_tier > 0 && cd.well == 0.0 && ship.energy >= 25.0 {
             ship.energy -= 25.0;
             cd.well = WELL_COOLDOWN;
+            sfx.write(crate::audio::Sfx::Missile);
             commands.spawn((
                 SystemScoped,
                 ForceWell {
@@ -398,6 +402,7 @@ fn fly_missiles(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     let dt = DT * TIME_WARP;
     for (entity, mut missile, mut pos, mut vel) in &mut missiles {
@@ -426,6 +431,7 @@ fn fly_missiles(
             && tpos.0.distance(pos.0) < 2.0e8
         {
             hull.hp -= missile.damage;
+            sfx.write(crate::audio::Sfx::Explosion);
             crate::fx::spawn_explosion(
                 &mut commands,
                 &mut meshes,
@@ -495,6 +501,7 @@ fn reap_hulls(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     for (entity, hull, pos, bounty) in &hulls {
         if hull.hp > 0.0 {
@@ -514,6 +521,7 @@ fn reap_hulls(
         } else {
             10.0
         };
+        sfx.write(crate::audio::Sfx::Explosion);
         crate::fx::spawn_explosion(
             &mut commands,
             &mut meshes,

@@ -133,6 +133,7 @@ fn comet_strikes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     let Ok((mut ship, ship_pos, mut ship_vel)) = ships.single_mut() else {
         for (mut comet, _, _) in &mut comets {
@@ -153,9 +154,11 @@ fn comet_strikes(
             Vec3d::new(1.0, 0.0, 0.0)
         };
         let (absorbed, through) = split_damage(STRIKE_DAMAGE, ship.shield);
+        sfx.write(crate::audio::Sfx::Explosion);
         if absorbed > 0.0 {
             ship.shield -= absorbed;
             ship.energy = (ship.energy - absorbed * 0.6).max(0.0);
+            sfx.write(crate::audio::Sfx::ShieldHit);
             crate::fx::spawn_shield_flare(
                 &mut commands,
                 &mut meshes,
@@ -168,6 +171,7 @@ fn comet_strikes(
         }
         if through > 0.0 {
             ship.hull = (ship.hull - through).max(0.0);
+            sfx.write(crate::audio::Sfx::HullHit);
         }
         crate::fx::spawn_explosion(
             &mut commands,

@@ -143,6 +143,7 @@ fn drive_arm(
     mut arm: ResMut<SolarArm>,
     suns: Query<&SunBody>,
     mut ships: Query<&mut Ship>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     let dt = time.delta_secs_f64();
     if keys.just_pressed(KeyCode::KeyP) {
@@ -150,6 +151,7 @@ fn drive_arm(
             ArmPhase::Stowed | ArmPhase::Retracting => ArmPhase::Deploying,
             ArmPhase::Deploying | ArmPhase::Deployed => ArmPhase::Retracting,
         };
+        sfx.write(crate::audio::Sfx::SolarArm);
     }
     match arm.phase {
         ArmPhase::Deploying => {

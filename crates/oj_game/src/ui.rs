@@ -166,10 +166,14 @@ struct TouchKey(KeyCode);
 fn sync_touch_keys(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     controls: Query<(&Interaction, &TouchKey), Changed<Interaction>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
 ) {
     for (interaction, key) in &controls {
         match interaction {
-            Interaction::Pressed => keys.press(key.0),
+            Interaction::Pressed => {
+                keys.press(key.0);
+                sfx.write(crate::audio::Sfx::Click);
+            }
             _ => keys.release(key.0),
         }
     }
@@ -1608,6 +1612,8 @@ fn update_hud(
         Res<crate::weapons::TargetLock>,
         Res<crate::solar::SolarArm>,
     ),
+    mut sfx: MessageWriter<crate::audio::Sfx>,
+    mut was_critical: Local<bool>,
 ) {
     let (Some(model), Ok((ship, vel, nav, ship_pos))) = (model, ships.single()) else {
         return;
@@ -1618,15 +1624,11 @@ fn update_hud(
             .map(|b| b.name.to_uppercase())
             .unwrap_or_else(|_| "?".into())
     };
-    let nav_text = if let Some(target) = hold.target {
-        if hold.out_of_range {
-            format!(">> {}: OUT OF RANGE", name(target))
-        } else {
-            format!(">> COMMANDING {}: {:.0}%", name(target), hold.progress * 100.0)
-        }
+    let nav_text = if let (Some(target), true) = (hold.target, hold.out_of_range) {
+        format!(">> {}: OUT OF RANGE", name(target))
     } else {
         match *nav {
-            NavState::Free => ">> FREE FLIGHT — CLICK+HOLD A BODY".into(),
+            NavState::Free => ">> FREE FLIGHT — CLICK AN ORBIT".into(),
             NavState::Transfer { target, .. } => format!(">> TRANSFER: {}", name(target)),
             NavState::Orbiting { body, speed, .. } => format!(
                 ">> ORBIT LOCK: {} · RIDE {:+.1}x {} · [O] EXIT",
@@ -1723,7 +1725,12 @@ fn update_hud(
     model.0.set_contacts(contacts.into_iter().map(|(_, c)| c).take(6).collect());
     model.0.set_target(target_line);
     model.0.set_weapon_hints(Armament::of(&ship_upgrades).hints());
-    model.0.set_hull_warn(if ship.hull < 25.0 {
+    let critical = ship.hull < 25.0;
+    if critical && !*was_critical {
+        sfx.write(crate::audio::Sfx::Warning);
+    }
+    *was_critical = critical;
+    model.0.set_hull_warn(if critical {
         "!! HULL CRITICAL".into()
     } else {
         String::new()
