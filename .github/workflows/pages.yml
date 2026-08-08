@@ -72,7 +72,11 @@ jobs:
         run: |
           # Overwrite ONLY the bundle files — docs/ also holds real
           # documentation (design.md) that must survive every refresh.
-          cp web/dist/index.html web/dist/oj_game.js web/dist/oj_game_bg.wasm docs/
+          # `web/dist/*` is the whole shipped bundle: game js/wasm,
+          # index.html, and the PWA surface (manifest, service worker,
+          # icons) — hardcoding three filenames here is how new bundle
+          # files once went stale.
+          cp web/dist/* docs/
           touch docs/.nojekyll
           git add docs
           if git diff --cached --quiet; then
