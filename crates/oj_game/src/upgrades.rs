@@ -287,7 +287,11 @@ pub fn buy_from_world(world: &mut World, slot: UpgradeSlot) {
 /// Dev hooks: OJ_SALVAGE=500 seeds run salvage; OJ_STASH=20 seeds that
 /// many of EVERY element, so crafting paths can be exercised without a
 /// farming session. No-op on wasm and in normal runs.
-fn dev_salvage(mut run: ResMut<RunScore>, mut stash: ResMut<Stash>) {
+fn dev_salvage(
+    mut run: ResMut<RunScore>,
+    mut stash: ResMut<Stash>,
+    mut upgrades: ResMut<ShipUpgrades>,
+) {
     if let Ok(v) = std::env::var("OJ_SALVAGE")
         && let Ok(v) = v.parse::<u64>()
     {
@@ -306,6 +310,13 @@ fn dev_salvage(mut run: ResMut<RunScore>, mut stash: ResMut<Stash>) {
         for e in [E::Iron, E::Titanium, E::Silicon, E::Carbon, E::Ice, E::Uranium, E::Aetherite] {
             stash.0.insert(e, v);
         }
+    }
+    // OJ_SHIELD_TIER=n: install the Shield slot at that tier, so nova
+    // paths can be exercised without a crafting session.
+    if let Ok(v) = std::env::var("OJ_SHIELD_TIER")
+        && let Ok(v) = v.parse::<u8>()
+    {
+        upgrades.tiers.insert(UpgradeSlot::Shield, v);
     }
 }
 

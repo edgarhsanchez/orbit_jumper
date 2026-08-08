@@ -418,6 +418,7 @@ pub fn spawn_bodies(
             class: system.sun.class,
             hazard_radius: system.sun.hazard_radius,
         },
+        crate::nova::ObjectLevel(crate::nova::sun_level(system.sun.class)),
         CelestialBody {
             mu,
             radius: sun_radius,
@@ -516,6 +517,7 @@ pub fn spawn_bodies(
             .spawn((
                 SystemScoped,
                 OnRails(planet.orbit),
+                crate::nova::ObjectLevel(crate::nova::body_level(planet_radius)),
                 CelestialBody {
                     mu: oj_orbits::G * planet.mass,
                     radius: planet_radius,
@@ -558,6 +560,7 @@ pub fn spawn_bodies(
             let moon_entity = commands.spawn((
                 SystemScoped,
                 OnRailsAround { orbit: moon.orbit, parent: planet_entity },
+                crate::nova::ObjectLevel(crate::nova::body_level(moon_radius)),
                 CelestialBody {
                     mu: oj_orbits::G * moon.mass,
                     radius: moon_radius,
@@ -972,6 +975,23 @@ pub fn spawn_ship(
                         .with_rotation(Quat::from_rotation_z(rot)),
                 ));
             }
+            // The force field made visible: a translucent bubble whose
+            // glow follows the shield points (nova.rs drives it). One
+            // material per ship, mutated in place each frame.
+            ship.spawn((
+                crate::nova::ShieldBubble,
+                Mesh3d(meshes.add(Sphere::new(24.0).mesh().ico(4).unwrap())),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgba(0.35, 0.85, 1.0, 0.1),
+                    emissive: LinearRgba::rgb(0.2, 0.5, 0.65),
+                    alpha_mode: AlphaMode::Blend,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::default(),
+                bevy::light::NotShadowCaster,
+                bevy::picking::Pickable::IGNORE,
+            ));
             // Exhaust fire in layers, each flickering out of phase (the
             // fx module drives scale jitter) so the fire reads as alive.
             for (mat, radius, len, y, phase) in [

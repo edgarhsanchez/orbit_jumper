@@ -260,6 +260,9 @@ fn spawn_raiders(
 /// dreadnought.
 struct HostileSpec {
     hp: f64,
+    /// The pilot level this hostile was spawned against — its object
+    /// level for the nova's shield-consumption fight.
+    level: u32,
     bounty: u64,
     damage: f64,
     cooldown: f64,
@@ -278,6 +281,7 @@ impl HostileSpec {
         let l = level as f64;
         Self {
             hp: 30.0 * (1.0 + l * 0.15),
+            level,
             bounty: 40 + level as u64 * 8,
             damage: 6.0 * (1.0 + l * 0.10),
             cooldown: (2.6 - 0.06 * l).max(1.2),
@@ -418,6 +422,10 @@ fn spawn_hostile(
             mine_cd: spec.mine_every,
         },
         Hull { hp },
+        // The nova fight: this screen soaks wave punch until consumed,
+        // and the spawn level is the hostile's object level.
+        crate::nova::NovaShield(hp * 0.4),
+        crate::nova::ObjectLevel(spec.level),
         Bounty(bounty),
         SimPos(pos),
         SimVel(vel),

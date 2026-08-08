@@ -40,6 +40,18 @@ the size of the void.
 | <img src="docs/media/solar-arm.png" alt="The solar arm deployed: telescoping boom aimed at the sun with the octagonal collector lit" width="440"> | **The solar arm.** Free flight has no ambient refueling — energy comes from riding an orbit, or from the deliberate, vulnerable act of deploying the arm (`P`): a telescoping boom aims at the nearest sun, the octagonal collector lights on its sun side, and the tank fills fast — but **weapons stay offline until it stows**. At full charge it stows itself. Better suns pour faster; they also burn hotter. |
 | <img src="docs/media/level-up.png" alt="HUD flash on level-up: LEVEL 4 — +2 SKILL POINTS, with the pilot line showing banked SP" width="440"> | **Level up, craft gear.** Rank is earned fresh every run — score is bounty-weighted combat, level comes from THIS run alone, and every restart begins back at level 1. Each new level banks **2 skill points** (unspent points die with the hull). Crafting the next tier of any gear slot costs that slot's **material recipe plus one point**: shields want titanium and ice, drives iron and carbon, graviton tech the uranium and aetherite that only radioactive worlds and raider wrecks supply. The vessel panel shows every recipe, your stash counts per element, and lights up what you can afford. Wreckage **streams to the nearest ship on its own** and pays twice: an element for the forge plus **salvage credits** — the CR readout is a spendable balance, and hull patches cost exactly that (2 CR per hull point, no materials, no points). Debris is PBR-real while it drifts: bare-metal iron and titanium, glassy ice, faintly glowing exotics, every piece tumbling so its **sun-facing side glints**. |
 
+**The shield, visible — and weaponized.** Every ship wears its force field
+as a glowing bubble whose aura tracks the shield points behind it: full
+shield is unmistakable, a drained one barely shimmers. Craft the Shield
+slot and `N` turns defense into offense — the **NOVA** dumps your whole
+shield into an expanding wave that drinks reactor energy as it grows.
+Hostile screens soak the punch until they're consumed (the burn-through is
+your Shield tier — the shield weapon skill). And every celestial object
+carries a **level**: outrank a moon, a planet, even a sun (rating = 2× 
+Shield tier + pilot level) and the wave shatters it — suns burst into more
+harvestable energy than any planet of their level, planets into debris
+that scales with theirs, and the salvage magnet drags the corpse home.
+
 ## The sound of the void
 
 Every sound is procedurally synthesized (`tools/synth_audio.py`) and embedded
@@ -92,6 +104,7 @@ back: rank is per-run, and the save dies with the hull.
 | Cockpit ⇄ tactical | `F` | **VIEW** |
 | Laser / missile¹ | `Z` / `X` | **LAS / MSL** |
 | Gravity wells¹ | `C` / `V` | **PULL / PUSH** |
+| Shield nova¹ (Shield slot) | `N` | — |
 | Craft gear tiers | `1`–`8` | vessel panel CRAFT buttons |
 | Patch the hull (salvage CR) | `9` | vessel panel REPAIR button |
 | Vessel / map / study | `Tab` / `M` / `S` | topbar buttons |
