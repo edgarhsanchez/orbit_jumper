@@ -104,7 +104,7 @@ back: rank is per-run, and the save dies with the hull.
 | Cockpit ⇄ tactical | `F` | **VIEW** |
 | Laser / missile¹ | `Z` / `X` | **LAS / MSL** |
 | Gravity wells¹ | `C` / `V` | **PULL / PUSH** |
-| Shield nova¹ (Shield slot) | `N` | — |
+| Shield nova¹ (Shield slot) | `N` | **NOVA** |
 | Craft gear tiers | `1`–`8` | vessel panel CRAFT buttons |
 | Patch the hull (salvage CR) | `9` | vessel panel REPAIR button |
 | Vessel / map / study | `Tab` / `M` / `S` | topbar buttons |

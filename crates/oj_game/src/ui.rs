@@ -1066,6 +1066,45 @@ const TOUCH_WEAPONS_XAML: &str = r##"
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="con-shield" TargetType="Button">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid Width="66" Height="52">
+              <Path x:Name="frame" Width="66" Height="52" Stretch="Fill"
+                    Fill="#D8061218" Stroke="#00E5FF" StrokeThickness="1"
+                    Data="M 10,0 L 56,0 L 66,10 L 66,42 L 56,52 L 10,52 L 0,42 L 0,10 Z"/>
+              <Rectangle x:Name="notch" Width="26" Height="2" Fill="#00E5FF"
+                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,0,0,0"/>
+              <Ellipse x:Name="led" Width="5" Height="5" Fill="#00E5FF"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,9,0">
+                <Ellipse.Triggers>
+                  <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                      <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                         From="0.2" To="1.0" Duration="0:0:1.1"/>
+                      </Storyboard>
+                    </BeginStoryboard>
+                  </EventTrigger>
+                </Ellipse.Triggers>
+              </Ellipse>
+              <ContentPresenter/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#5900E5FF"/>
+                <Setter TargetName="notch" Property="Width" Value="44"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="frame" Property="Fill" Value="#C800E5FF"/>
+                <Setter TargetName="notch" Property="Width" Value="56"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </StackPanel.Resources>
   <Border Background="#C8060C12" BorderBrush="#12333A" BorderThickness="1" Padding="8,6">
     <StackPanel>
@@ -1087,6 +1126,7 @@ const TOUCH_WEAPONS_XAML: &str = r##"
       </StackPanel>
       @WROW1
       @WROW2
+      @WROW3
     </StackPanel>
   </Border>
 </StackPanel>
@@ -1109,6 +1149,15 @@ const WPN_MSL_BTN: &str = r##"
       <StackPanel>
         <TextBlock Text="MSL" Foreground="#E8F4F8" FontSize="12" HorizontalAlignment="Center"/>
         <TextBlock Text="X" Foreground="#6A4A3E" FontSize="8" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Button>
+"##;
+
+const WPN_NOVA_ROW: &str = r##"
+    <Button x:Name="btn_nova" Style="{StaticResource con-shield}" Margin="0,0,0,0">
+      <StackPanel>
+        <TextBlock Text="NOVA" Foreground="#E8F8FF" FontSize="12" HorizontalAlignment="Center"/>
+        <TextBlock Text="SHIELD N" Foreground="#2A5A66" FontSize="8" HorizontalAlignment="Center"/>
       </StackPanel>
     </Button>
 "##;
@@ -1200,6 +1249,7 @@ struct Armament {
     laser: bool,
     missiles: bool,
     wells: bool,
+    nova: bool,
 }
 
 impl Armament {
@@ -1208,11 +1258,12 @@ impl Armament {
             laser: upgrades.tier(UpgradeSlot::LaserWeapon) > 0,
             missiles: upgrades.tier(UpgradeSlot::MissileRack) > 0,
             wells: upgrades.tier(UpgradeSlot::ForceFieldProjector) > 0,
+            nova: upgrades.tier(UpgradeSlot::Shield) > 0,
         }
     }
 
     fn any(&self) -> bool {
-        self.laser || self.missiles || self.wells
+        self.laser || self.missiles || self.wells || self.nova
     }
 
     /// The weapons cluster for this armament, or None when unarmed.
@@ -1235,10 +1286,12 @@ impl Armament {
             }
         };
         let row2 = if self.wells { WPN_WELL_ROW } else { "" };
+        let row3 = if self.nova { WPN_NOVA_ROW } else { "" };
         Some(
             m.fill(TOUCH_WEAPONS_XAML)
                 .replace("@WROW1", &wrap(&row1))
-                .replace("@WROW2", &wrap(row2)),
+                .replace("@WROW2", &wrap(row2))
+                .replace("@WROW3", &wrap(row3)),
         )
     }
 
@@ -1254,12 +1307,15 @@ impl Armament {
         if self.wells {
             s.push_str("  [C/V] WELLS");
         }
+        if self.nova {
+            s.push_str("  [N] NOVA");
+        }
         s
     }
 }
 
 /// btn_* name -> virtual key, for wiring TouchKey after instantiation.
-const TOUCH_KEYS: [(&str, KeyCode); 12] = [
+const TOUCH_KEYS: [(&str, KeyCode); 13] = [
     ("btn_exit_orbit", KeyCode::KeyO),
     ("btn_arm", KeyCode::KeyP),
     ("btn_view", KeyCode::KeyF),
@@ -1272,6 +1328,7 @@ const TOUCH_KEYS: [(&str, KeyCode); 12] = [
     ("btn_msl", KeyCode::KeyX),
     ("btn_pull", KeyCode::KeyC),
     ("btn_push", KeyCode::KeyV),
+    ("btn_nova", KeyCode::KeyN),
 ];
 
 /// Root entity of the vessel panel, for the Tab toggle.
