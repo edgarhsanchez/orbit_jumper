@@ -122,12 +122,26 @@ impl Plugin for NovaPlugin {
 /// climb with shield points, and a slow breath keeps it alive.
 fn glow_bubbles(
     time: Res<Time>,
+    view: Res<crate::sim::ViewMode>,
     ships: Query<&Ship>,
     bubbles: Query<(&ChildOf, &MeshMaterial3d<StandardMaterial>, Entity), With<ShieldBubble>>,
     mut transforms: Query<&mut Transform, With<ShieldBubble>>,
+    mut visibility: Query<&mut Visibility, With<ShieldBubble>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (parent, mat, entity) in &bubbles {
+        // In cockpit view the camera sits INSIDE the bubble — a
+        // screen-filling dome, not a force field. First person hides it.
+        if let Ok(mut vis) = visibility.get_mut(entity) {
+            *vis = if *view == crate::sim::ViewMode::Cockpit {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
+        }
+        if *view == crate::sim::ViewMode::Cockpit {
+            continue;
+        }
         let Ok(ship) = ships.get(parent.parent()) else { continue };
         let charge = (ship.shield / 100.0).clamp(0.0, 1.0);
         if let Some(mut m) = materials.get_mut(&mat.0) {

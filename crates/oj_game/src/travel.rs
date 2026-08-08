@@ -99,6 +99,7 @@ fn perform_jump(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut sun_materials: ResMut<Assets<crate::fx::SunMaterial>>,
+    mut nebula_materials: ResMut<Assets<crate::fx::NebulaMaterial>>,
 ) {
     let Some(target) = pending.0.take() else { return };
     let Ok((mut ship, mut pos, mut vel, mut nav)) = ships.single_mut() else { return };
@@ -121,7 +122,7 @@ fn perform_jump(
     study.progress = 0.0;
     study.revealed = false;
 
-    spawn_bodies(&mut commands, &destination, &mut meshes, &mut materials, &mut sun_materials);
+    spawn_bodies(&mut commands, &destination, &mut meshes, &mut materials, &mut sun_materials, &mut nebula_materials);
 
     // Fresh start orbit in the new system.
     let mu = oj_orbits::G * destination.sun.mass;
@@ -161,6 +162,7 @@ mod tests {
         ));
         app.init_asset::<Mesh>();
         app.init_asset::<StandardMaterial>();
+        app.init_asset::<crate::fx::NebulaMaterial>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::stick::JoyInput>();
         app.init_resource::<crate::solar::SolarArm>();

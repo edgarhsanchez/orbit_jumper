@@ -162,6 +162,108 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// The nebula backdrop shader: domain-warped fbm clouds in two seeded
+/// hues drifting almost imperceptibly. Evaluated per fragment on two
+/// huge sky quads — zero CPU per frame, and every system's seed paints
+/// a different sky.
+pub const NEBULA_SHADER: Handle<Shader> =
+    bevy::asset::uuid_handle!("3f8a1c2e-6b4d-4e9a-9c7f-0d5e88a21b57");
+
+const NEBULA_WGSL: &str = r#"
+#import bevy_pbr::forward_io::VertexOutput
+#import bevy_pbr::mesh_view_bindings::globals
+
+struct NebulaParams {
+    // x: seed, y: palette shift 0..1, z: brightness, w: cloud scale
+    v: vec4<f32>,
+}
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: NebulaParams;
+
+fn hash3(p: vec3<f32>) -> f32 {
+    return fract(sin(dot(p, vec3<f32>(127.1, 311.7, 74.7))) * 43758.5453123);
+}
+
+fn vnoise(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash3(i);
+    let b = hash3(i + vec3<f32>(1.0, 0.0, 0.0));
+    let c = hash3(i + vec3<f32>(0.0, 1.0, 0.0));
+    let d = hash3(i + vec3<f32>(1.0, 1.0, 0.0));
+    let e = hash3(i + vec3<f32>(0.0, 0.0, 1.0));
+    let f1 = hash3(i + vec3<f32>(1.0, 0.0, 1.0));
+    let g = hash3(i + vec3<f32>(0.0, 1.0, 1.0));
+    let h = hash3(i + vec3<f32>(1.0, 1.0, 1.0));
+    let x1 = mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    let x2 = mix(mix(e, f1, u.x), mix(g, h, u.x), u.y);
+    return mix(x1, x2, u.z);
+}
+
+fn fbm(p: vec3<f32>) -> f32 {
+    var v = 0.0;
+    var a = 0.5;
+    var q = p;
+    for (var i = 0; i < 5; i = i + 1) {
+        v = v + a * vnoise(q);
+        q = q * 2.17 + vec3<f32>(5.2, 1.3, 8.7);
+        a = a * 0.5;
+    }
+    return v;
+}
+
+// IQ cosine palette: seeded, always a plausible deep-space pair.
+fn palette(t: f32, shift: f32) -> vec3<f32> {
+    return vec3<f32>(0.5) + vec3<f32>(0.5) * cos(6.28318 * (vec3<f32>(1.0, 0.7, 0.4) * t
+        + vec3<f32>(0.0, 0.15, 0.20) + shift));
+}
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    let seed = params.v.x;
+    let shift = params.v.y;
+    let bright = params.v.z;
+    let scale = params.v.w;
+    // Barely-drifting domain-warped clouds; the sky breathes over
+    // minutes, not seconds.
+    let t = globals.time * 0.004;
+    let p = vec3<f32>(in.uv * scale, seed * 17.31);
+    let q = fbm(p + vec3<f32>(t, -t * 0.7, 0.0));
+    let r = fbm(p + 2.6 * vec3<f32>(q, q * 0.8, 0.1) + vec3<f32>(1.7, 9.2, 3.3));
+    let d = fbm(p + 3.2 * vec3<f32>(r, r, 0.2));
+    // Sparse clouds with real dark gaps between them.
+    let dens = smoothstep(0.42, 0.85, d);
+    let wisp = smoothstep(0.62, 0.92, r) * 0.6;
+    let col_a = palette(0.15 + q * 0.35, shift);
+    let col_b = palette(0.55 + r * 0.3, shift + 0.33);
+    let col = (col_a * dens + col_b * wisp) * bright;
+    let alpha = clamp((dens * 0.42 + wisp * 0.25) * bright, 0.0, 0.6);
+    return vec4<f32>(col * 0.35, alpha);
+}
+"#;
+
+/// Uniform block for [`NEBULA_SHADER`].
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct NebulaMaterial {
+    #[uniform(0)]
+    pub params: Vec4,
+}
+
+impl NebulaMaterial {
+    pub fn new(seed: f32, shift: f32, brightness: f32, scale: f32) -> Self {
+        Self { params: Vec4::new(seed, shift, brightness, scale) }
+    }
+}
+
+impl Material for NebulaMaterial {
+    fn fragment_shader() -> ShaderRef {
+        ShaderRef::Handle(NEBULA_SHADER)
+    }
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+}
+
 /// Uniform block for [`SUN_SHADER`]; see `SunParams` in the WGSL.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct SunMaterial {
@@ -212,7 +314,12 @@ impl Plugin for FxPlugin {
             .world_mut()
             .resource_mut::<Assets<Shader>>()
             .insert(&SUN_SHADER, Shader::from_wgsl(SUN_WGSL, "oj_sun.wgsl"));
+        let _ = app
+            .world_mut()
+            .resource_mut::<Assets<Shader>>()
+            .insert(&NEBULA_SHADER, Shader::from_wgsl(NEBULA_WGSL, "oj_nebula.wgsl"));
         app.add_plugins(MaterialPlugin::<SunMaterial>::default())
+            .add_plugins(MaterialPlugin::<NebulaMaterial>::default())
             .add_systems(Update, (tick_particles, flicker_flames));
     }
 }

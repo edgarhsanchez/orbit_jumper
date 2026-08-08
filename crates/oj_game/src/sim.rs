@@ -271,12 +271,13 @@ fn spawn_current_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut sun_materials: ResMut<Assets<crate::fx::SunMaterial>>,
+    mut nebula_materials: ResMut<Assets<crate::fx::NebulaMaterial>>,
 ) {
     let Some(system) = game.universe.system(game.current) else {
         error!("current system does not exist; universe misconfigured");
         return;
     };
-    spawn_bodies(&mut commands, &system, &mut meshes, &mut materials, &mut sun_materials);
+    spawn_bodies(&mut commands, &system, &mut meshes, &mut materials, &mut sun_materials, &mut nebula_materials);
 
     // The ship starts in a comfortable circular orbit of the sun.
     let mu = oj_orbits::G * system.sun.mass;
@@ -381,8 +382,38 @@ pub fn spawn_bodies(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     sun_materials: &mut Assets<crate::fx::SunMaterial>,
+    nebula_materials: &mut Assets<crate::fx::NebulaMaterial>,
 ) {
     let mu = oj_orbits::G * system.sun.mass;
+
+    // The seeded nebula sky: two huge cloud quads far outside the play
+    // volume — one under the tactical floor, one over the cockpit sky —
+    // SystemScoped, so every jump paints a different one. Plain render
+    // coordinates like the starfield: the ship rides the origin, so the
+    // clouds read as infinitely far.
+    let mut neb_rng = oj_universe::SplitMix64(
+        0x9EBA
+            ^ (system.id.index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (system.id.sector.x as u64).rotate_left(13)
+            ^ (system.id.sector.y as u64).rotate_left(29)
+            ^ (system.id.sector.z as u64).rotate_left(47),
+    );
+    let nebula = nebula_materials.add(crate::fx::NebulaMaterial::new(
+        neb_rng.range(0.0, 1.0) as f32,
+        neb_rng.range(0.0, 1.0) as f32,
+        neb_rng.range(0.55, 1.0) as f32,
+        neb_rng.range(2.6, 4.2) as f32,
+    ));
+    for (z, normal) in [(-2800.0f32, Vec3::Z), (2800.0, -Vec3::Z)] {
+        commands.spawn((
+            SystemScoped,
+            Mesh3d(meshes.add(Plane3d::new(normal, Vec2::splat(9000.0)))),
+            MeshMaterial3d(nebula.clone()),
+            Transform::from_xyz(0.0, 0.0, z),
+            bevy::light::NotShadowCaster,
+            bevy::picking::Pickable::IGNORE,
+        ));
+    }
 
     // Ride-orbit ring materials: dim at rest, bright under the pointer.
     let ring_dim = materials.add(StandardMaterial {
