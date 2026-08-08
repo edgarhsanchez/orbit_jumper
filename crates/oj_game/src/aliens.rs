@@ -56,6 +56,27 @@ pub struct Dreadnought;
 #[derive(Component)]
 pub struct MineLayer;
 
+/// The carrier: slow, heavy, and a mothership — it hatches kamikaze
+/// interceptors on a clock until it dies. Kill it first or the sky
+/// fills with darts.
+#[derive(Component)]
+pub struct Carrier {
+    hatch_every: f64,
+    hatch_cd: f64,
+    level: u32,
+}
+
+/// A hatched kamikaze: seeks like a raider, but its weapon is ITSELF —
+/// it detonates on proximity, shield-first like everything else.
+#[derive(Component)]
+pub struct Interceptor {
+    damage: f64,
+    ttl: f64,
+}
+
+/// Interceptors detonate inside this range, m.
+const INTERCEPT_TRIGGER: f64 = 7.0e8;
+
 /// A proximity mine: arms after a delay, drifts, detonates on the
 /// player's hull — shields first, like everything else that hits.
 #[derive(Component)]
@@ -131,7 +152,8 @@ impl Plugin for AliensPlugin {
             .init_resource::<TrajPool>()
             .add_systems(
                 FixedUpdate,
-                (spawn_raiders, alien_ai, fly_bolts, fly_mines).chain(),
+                (spawn_raiders, alien_ai, run_carriers, fly_interceptors, fly_bolts, fly_mines)
+                    .chain(),
             )
             .add_systems(Update, project_trajectories);
     }
@@ -233,6 +255,14 @@ fn spawn_raiders(
     } else {
         0.0
     };
+    // Dev hook: OJ_CARRIER=1 forces every regular spawn to a carrier.
+    let carrier_chance = if std::env::var("OJ_CARRIER").is_ok() {
+        1.0
+    } else if level >= 8 {
+        0.10
+    } else {
+        0.0
+    };
     for n in 0..wave {
         // Each ship in the wave gets its own bearing — a gang closing
         // from several directions, not a queue on one vector.
@@ -244,9 +274,11 @@ fn spawn_raiders(
             // One capital per wave is plenty.
             heavy_chance = 0.0;
             (HostileSpec::dreadnought(level), "dreadnought")
-        } else if roll < heavy_chance + elite_chance {
+        } else if roll < heavy_chance + carrier_chance {
+            (HostileSpec::carrier(level), "carrier")
+        } else if roll < heavy_chance + carrier_chance + elite_chance {
             (HostileSpec::elite(level), "elite")
-        } else if roll < heavy_chance + elite_chance + weaver_chance {
+        } else if roll < heavy_chance + carrier_chance + elite_chance + weaver_chance {
             (HostileSpec::weaver(level), "weaver")
         } else {
             (HostileSpec::raider(level), "raider")
@@ -273,6 +305,10 @@ struct HostileSpec {
     boss: bool,
     /// Seconds between mines; 0 = not a layer.
     mine_every: f64,
+    /// Seconds between hatched interceptors; 0 = not a carrier.
+    hatch_every: f64,
+    /// Contact detonation damage; 0 = not a kamikaze.
+    kamikaze: f64,
 }
 
 impl HostileSpec {
@@ -291,6 +327,40 @@ impl HostileSpec {
             elite: false,
             boss: false,
             mine_every: 0.0,
+            hatch_every: 0.0,
+            kamikaze: 0.0,
+        }
+    }
+
+    /// The carrier: a slow flying hangar. Weak gun, huge hull, and a
+    /// hatch that keeps the interceptors coming.
+    fn carrier(level: u32) -> Self {
+        let base = Self::raider(level);
+        Self {
+            hp: base.hp * 6.0,
+            bounty: base.bounty * 8,
+            damage: base.damage * 0.8,
+            cooldown: base.cooldown * 2.2,
+            approach: base.approach * 0.45,
+            scale: 2.6,
+            hatch_every: 8.0,
+            ..base
+        }
+    }
+
+    /// A hatched dart: unarmed but for itself — fast, fragile, and
+    /// aimed straight at the hull.
+    fn interceptor(level: u32) -> Self {
+        let base = Self::raider(level);
+        Self {
+            hp: base.hp * 0.35,
+            bounty: 10 + level as u64 * 2,
+            damage: 0.0,
+            cooldown: 1.0e9,
+            approach: base.approach * 2.6,
+            scale: 0.6,
+            kamikaze: 14.0 * (1.0 + level as f64 * 0.08),
+            ..base
         }
     }
 
@@ -366,6 +436,22 @@ fn spawn_hostile(
             LinearRgba::rgb(1.5, 0.2, 0.25),
             Color::srgb(0.85, 0.5, 0.2),
             LinearRgba::rgb(1.0, 0.5, 0.1),
+        )
+    } else if spec.hatch_every > 0.0 {
+        // Carriers run violet-slate: big, slow, and worth killing first.
+        (
+            Color::srgb(0.55, 0.48, 0.75),
+            LinearRgba::rgb(0.7, 0.4, 1.3),
+            Color::srgb(0.4, 0.35, 0.6),
+            LinearRgba::rgb(0.5, 0.3, 1.0),
+        )
+    } else if spec.kamikaze > 0.0 {
+        // Interceptors burn hot magenta: the streak IS the warning.
+        (
+            Color::srgb(1.0, 0.35, 0.75),
+            LinearRgba::rgb(2.0, 0.4, 1.2),
+            Color::srgb(0.9, 0.2, 0.5),
+            LinearRgba::rgb(1.6, 0.2, 0.8),
         )
     } else if spec.mine_every > 0.0 {
         // Weavers run pale ice-blue: read the color, hunt the layer.
@@ -445,6 +531,16 @@ fn spawn_hostile(
     if spec.mine_every > 0.0 {
         root.insert(MineLayer);
     }
+    if spec.hatch_every > 0.0 {
+        root.insert(Carrier {
+            hatch_every: spec.hatch_every,
+            hatch_cd: spec.hatch_every * 0.5,
+            level: spec.level,
+        });
+    }
+    if spec.kamikaze > 0.0 {
+        root.insert(Interceptor { damage: spec.kamikaze, ttl: 75.0 });
+    }
     root.with_children(|alien| {
             // Jagged fin trio at 120-degree spacing.
             for k in 0..3 {
@@ -505,7 +601,14 @@ fn alien_ai(
     ships: Query<(&SimPos, &SimVel), (With<Ship>, Without<AlienShip>)>,
     #[allow(clippy::type_complexity)]
     mut aliens: Query<
-        (&mut AlienShip, &mut SimPos, &mut SimVel, &mut BodyVel, &mut Transform),
+        (
+            &mut AlienShip,
+            &mut SimPos,
+            &mut SimVel,
+            &mut BodyVel,
+            &mut Transform,
+            Option<&Interceptor>,
+        ),
         Without<Ship>,
     >,
     mut commands: Commands,
@@ -514,7 +617,7 @@ fn alien_ai(
 ) {
     let Ok((ship_pos, ship_vel)) = ships.single() else { return };
     let dt = DT * TIME_WARP;
-    for (mut alien, mut pos, mut vel, mut bvel, mut transform) in &mut aliens {
+    for (mut alien, mut pos, mut vel, mut bvel, mut transform, dart) in &mut aliens {
         let to_ship = ship_pos.0 - pos.0;
         let dist = to_ship.length().max(1.0);
         let dir = to_ship * (1.0 / dist);
@@ -525,7 +628,8 @@ fn alien_ai(
         // The circle is not steady: each raider reverses its circling
         // direction on its own irregular clock and jinks radially, so a
         // gunner never gets a free tracking solution.
-        let desired = if dist > FIRE_RANGE * 0.5 {
+        // A kamikaze never circles: the terminal run is straight in.
+        let desired = if dart.is_some() || dist > FIRE_RANGE * 0.5 {
             ship_vel.0 + dir * alien.approach
         } else {
             let weave = (clock.0 * 9.0e-4 + alien.phase).sin().signum();
@@ -827,6 +931,104 @@ fn fly_mines(
     }
 }
 
+/// Carriers hatch interceptors on their clock, capped at three darts in
+/// the air per live carrier so a surviving mothership pressures without
+/// snowballing.
+fn run_carriers(
+    mut carriers: Query<(&mut Carrier, &SimPos, &SimVel)>,
+    interceptors: Query<(), With<Interceptor>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let live_carriers = carriers.iter().count();
+    if live_carriers == 0 {
+        return;
+    }
+    let mut darts = interceptors.iter().count();
+    for (mut carrier, pos, vel) in &mut carriers {
+        carrier.hatch_cd -= DT;
+        if carrier.hatch_cd > 0.0 || darts >= live_carriers * 3 {
+            continue;
+        }
+        carrier.hatch_cd = carrier.hatch_every;
+        darts += 1;
+        let offset = Vec3d::new(
+            (pos.0.x.to_bits() % 7) as f64 - 3.0,
+            (pos.0.y.to_bits() % 5) as f64 - 2.0,
+            0.0,
+        ) * 2.0e8;
+        spawn_hostile(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            pos.0 + offset,
+            vel.0,
+            HostileSpec::interceptor(carrier.level),
+        );
+        info!("interceptor away (carrier level {})", carrier.level);
+    }
+}
+
+/// The dart's whole life: tick down, close, detonate on proximity —
+/// shields soak first, the hit shoves the ship, and the dart is spent
+/// either way.
+#[allow(clippy::type_complexity)]
+fn fly_interceptors(
+    mut darts: Query<(Entity, &mut Interceptor, &SimPos), Without<Ship>>,
+    mut ships: Query<
+        (&mut Ship, &SimPos, &mut SimVel),
+        (With<crate::sim::OriginAnchor>, Without<Interceptor>),
+    >,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut sfx: MessageWriter<crate::audio::Sfx>,
+) {
+    for (entity, mut dart, pos) in &mut darts {
+        dart.ttl -= DT;
+        if dart.ttl <= 0.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let Ok((mut ship, ship_pos, mut ship_vel)) = ships.single_mut() else { continue };
+        let d = ship_pos.0.distance(pos.0);
+        if d > INTERCEPT_TRIGGER {
+            continue;
+        }
+        let strike_dir = if d > 1.0 {
+            (pos.0 - ship_pos.0) / d
+        } else {
+            Vec3d::new(1.0, 0.0, 0.0)
+        };
+        let absorbed = dart.damage.min(ship.shield);
+        let through = dart.damage - absorbed;
+        sfx.write(crate::audio::Sfx::Explosion);
+        if absorbed > 0.0 {
+            ship.shield -= absorbed;
+            sfx.write(crate::audio::Sfx::ShieldHit);
+        }
+        if through > 0.0 {
+            ship.hull = (ship.hull - through).max(0.0);
+            sfx.write(crate::audio::Sfx::HullHit);
+        }
+        crate::fx::spawn_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            pos.0,
+            Vec3d::ZERO,
+            9.0,
+        );
+        ship_vel.0 += strike_dir * -1.2e4;
+        info!(
+            "interceptor strike: shield {:.0}, hull {:.0}",
+            ship.shield, ship.hull
+        );
+        commands.entity(entity).despawn();
+    }
+}
+
 #[cfg(test)]
 mod pacing_tests {
     use super::*;
@@ -848,5 +1050,20 @@ mod pacing_tests {
         assert_eq!(wave_size(1), 1);
         assert_eq!(wave_size(10), 3);
         assert_eq!(wave_size(50), 3);
+    }
+
+    /// The carrier fight's shape: a mothership worth eight raiders that
+    /// barely shoots, hatching darts that never shoot at all — their
+    /// warhead is the airframe, and it grows with level.
+    #[test]
+    fn carrier_and_interceptor_specs_hold() {
+        let c = HostileSpec::carrier(8);
+        let r = HostileSpec::raider(8);
+        assert!(c.hp > r.hp * 5.0 && c.approach < r.approach);
+        assert!(c.hatch_every > 0.0 && c.kamikaze == 0.0);
+        let i = HostileSpec::interceptor(8);
+        assert!(i.hp < r.hp && i.approach > r.approach * 2.0);
+        assert!(i.damage == 0.0, "darts never fire bolts");
+        assert!(HostileSpec::interceptor(20).kamikaze > i.kamikaze);
     }
 }

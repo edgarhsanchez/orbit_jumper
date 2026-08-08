@@ -1826,6 +1826,8 @@ fn update_hud(
                 Option<&crate::aliens::Dreadnought>,
                 Option<&crate::aliens::Elite>,
                 Option<&crate::aliens::MineLayer>,
+                Option<&crate::aliens::Carrier>,
+                Option<&crate::aliens::Interceptor>,
             ),
             With<crate::aliens::AlienShip>,
         >,
@@ -1895,7 +1897,7 @@ fn update_hud(
 
     model.0.set_style(style_res.label());
     let raiders = raider_q.iter().count();
-    let boss_present = raider_q.iter().any(|(_, _, _, boss, _, _)| boss.is_some());
+    let boss_present = raider_q.iter().any(|(_, _, _, boss, _, _, _, _)| boss.is_some());
     model.0.set_threat(if boss_present {
         "!! DREADNOUGHT IN-SYSTEM".into()
     } else if raiders > 0 {
@@ -1909,7 +1911,9 @@ fn update_hud(
     // locked vessel is flagged and drives the console target line.
     let mut target_line = String::new();
     let mut contacts: Vec<(f64, ContactVm)> = Vec::new();
-    for (i, (entity, a_pos, a_vel, boss, elite, weaver)) in raider_q.iter().enumerate() {
+    for (i, (entity, a_pos, a_vel, boss, elite, weaver, carrier, dart)) in
+        raider_q.iter().enumerate()
+    {
         let rel = a_pos.0 - ship_pos.0;
         let dist = rel.length();
         let rel_v = a_vel.0 - vel.0;
@@ -1918,6 +1922,10 @@ fn update_hud(
         let locked = lock.0 == Some(entity);
         let callsign = if boss.is_some() {
             "DREADNOUGHT".to_string()
+        } else if carrier.is_some() {
+            format!("CARRIER-{} [HATCHING]", i + 1)
+        } else if dart.is_some() {
+            format!("INTERCEPTOR-{}", i + 1)
         } else if weaver.is_some() {
             format!("WEAVER-{} [MINES]", i + 1)
         } else if elite.is_some() {
