@@ -83,7 +83,7 @@ pub fn repair_cost(missing: f64) -> u64 {
 /// like crafting. Spending never lowers score: the score term is
 /// credits EARNED, and this only moves the spent counter.
 pub fn try_repair(run: &mut RunScore, ship: &mut Ship) -> bool {
-    let missing = 100.0 - ship.hull;
+    let missing = ship.hull_max - ship.hull;
     if missing < 0.5 {
         return false;
     }
@@ -92,7 +92,7 @@ pub fn try_repair(run: &mut RunScore, ship: &mut Ship) -> bool {
         return false;
     }
     run.salvage_spent += cost;
-    ship.hull = 100.0;
+    ship.hull = ship.hull_max;
     info!("hull repaired for {cost} CR ({} CR left)", run.salvage_balance());
     true
 }
@@ -148,6 +148,7 @@ impl ShipUpgrades {
     pub fn apply(&self, ship: &mut Ship) {
         let base = Ship::default();
         ship.shield_tier = base.shield_tier.saturating_add(self.tier(UpgradeSlot::Shield));
+        ship.hull_max = base.hull_max + 25.0 * self.tier(UpgradeSlot::Hull) as f64;
         ship.command_range =
             base.command_range * (1.0 + self.tier(UpgradeSlot::CommandArray) as f64);
         ship.thrust = base.thrust * 1.2f64.powi(self.tier(UpgradeSlot::RocketDrive) as i32);
@@ -324,7 +325,13 @@ fn dev_salvage(
 /// their engineering; only the hull was lost).
 fn apply_to_new_ships(upgrades: Res<ShipUpgrades>, mut ships: Query<&mut Ship, Added<Ship>>) {
     for mut ship in &mut ships {
+        let fresh_full = ship.hull == 100.0;
         upgrades.apply(&mut ship);
+        // A fresh hull launches at its plated ceiling; a mid-run resume
+        // (save.rs restores a lower value afterwards) keeps its damage.
+        if fresh_full {
+            ship.hull = ship.hull_max;
+        }
     }
 }
 
@@ -411,6 +418,27 @@ mod tests {
         assert!(!try_craft(&mut upgrades, &mut stash, &mut run, slot));
         assert_eq!(stash.0[&a], 3);
         assert_eq!(run.skill_points, 2 - CRAFT_POINT_COST);
+    }
+
+    /// The two payoff-gear slots do what their rows claim: HULL PLATING
+    /// raises the ceiling 25 per tier, LIGHT DRIVE compounds the jump
+    /// discount without ever making travel free.
+    #[test]
+    fn hull_plating_and_light_drive_pay_off() {
+        let mut upgrades = ShipUpgrades::default();
+        let mut ship = Ship::default();
+        upgrades.apply(&mut ship);
+        assert_eq!(ship.hull_max, 100.0);
+        upgrades.tiers.insert(UpgradeSlot::Hull, 3);
+        upgrades.apply(&mut ship);
+        assert_eq!(ship.hull_max, 175.0);
+
+        let d = 4.0e17;
+        let base = crate::travel::jump_cost(d, 0);
+        let t1 = crate::travel::jump_cost(d, 1);
+        let t5 = crate::travel::jump_cost(d, 5);
+        assert!(t1 < base && t5 < t1, "discount must compound");
+        assert!(t5 > 0.0, "travel is never free");
     }
 
     /// The repair contract: a patch spends the salvage credits the HUD

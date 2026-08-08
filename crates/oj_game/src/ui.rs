@@ -1459,7 +1459,7 @@ fn exit_orbit_visibility(
 
 /// Craftable slots, in vessel-panel row order; the craft command's
 /// parameter indexes this.
-const CRAFT_SLOTS: [(UpgradeSlot, &str, &str); 8] = [
+const CRAFT_SLOTS: [(UpgradeSlot, &str, &str); 10] = [
     (UpgradeSlot::Shield, "SHIELD PLATING", "#00A2FF"),
     (UpgradeSlot::CommandArray, "COMMAND ARRAY", "#B48CFF"),
     (UpgradeSlot::RocketDrive, "ROCKET DRIVE", "#FF7043"),
@@ -1468,6 +1468,8 @@ const CRAFT_SLOTS: [(UpgradeSlot, &str, &str); 8] = [
     (UpgradeSlot::LaserWeapon, "LASER ARRAY", "#FF5459"),
     (UpgradeSlot::MissileRack, "MISSILE RACK", "#FFB454"),
     (UpgradeSlot::ForceFieldProjector, "WELL PROJECTOR", "#B48CFF"),
+    (UpgradeSlot::Hull, "HULL PLATING", "#FF7043"),
+    (UpgradeSlot::LightDrive, "LIGHT DRIVE", "#7E97B8"),
 ];
 
 fn init_model(mut commands: Commands) {
@@ -1877,10 +1879,10 @@ fn update_hud(
     // Equality-checked setters: an unchanged readout costs nothing downstream.
     model.0.set_energy((ship.energy / ship.energy_max * 100.0).round());
     model.0.set_shield(ship.shield.round());
-    model.0.set_hull(ship.hull.round());
+    model.0.set_hull((ship.hull / ship.hull_max * 100.0).round());
     model.0.set_energy_text(format!("{:.0}/{:.0}", ship.energy, ship.energy_max));
     model.0.set_shield_text(format!("{:.0}/100", ship.shield));
-    model.0.set_hull_text(format!("{:.0}/100", ship.hull));
+    model.0.set_hull_text(format!("{:.0}/{:.0}", ship.hull, ship.hull_max));
     model.0.set_score(format!("{}", run.total()));
     model.0.set_best(format!("{}", career.best_run));
     let level = crate::upgrades::pilot_level(run.total());
@@ -1996,15 +1998,19 @@ fn update_hud(
     // Hull repair sits above the upgrade list: maintenance, not
     // engineering — it spends the salvage credits the HUD shows, no
     // materials, no skill points. What is shown is what can be spent.
-    let missing = 100.0 - ship.hull;
+    let missing = ship.hull_max - ship.hull;
     if missing < 0.5 {
-        model.0.set_repair_line("HULL 100/100 — NOMINAL".into());
+        model.0.set_repair_line(format!(
+            "HULL {:.0}/{:.0} — NOMINAL",
+            ship.hull, ship.hull_max
+        ));
         model.0.set_repair_color("#5A6472".into());
     } else {
         let cost = crate::upgrades::repair_cost(missing);
         model.0.set_repair_line(format!(
-            "HULL {:.0}/100 — PATCH: {} CR ({} CR BANKED)",
+            "HULL {:.0}/{:.0} — PATCH: {} CR ({} CR BANKED)",
             ship.hull,
+            ship.hull_max,
             cost,
             run.salvage_balance()
         ));
@@ -2084,7 +2090,10 @@ fn update_hud(
         .iter()
         .enumerate()
         .map(|(i, (id, dist))| {
-            let cost = crate::travel::jump_cost(*dist);
+            let cost = crate::travel::jump_cost(
+                *dist,
+                ship_upgrades.tier(oj_materials::UpgradeSlot::LightDrive),
+            );
             let affordable = ship.energy >= cost;
             let (name, color) = match atlas.0.get(id) {
                 Some(class) => (

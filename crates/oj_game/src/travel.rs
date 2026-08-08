@@ -66,8 +66,10 @@ fn record_studied_suns(
 pub const LY: f64 = 9.46e15;
 
 /// Jump cost in energy for a map distance, m.
-pub fn jump_cost(distance: f64) -> f64 {
-    30.0 + (distance / LY) * 4.0
+pub fn jump_cost(distance: f64, light_tier: u8) -> f64 {
+    // Each LIGHT DRIVE tier trims 12% off the fold — deep-galaxy travel
+    // is the payoff gear, compounding but never free.
+    (30.0 + (distance / LY) * 4.0) * 0.88f64.powi(light_tier as i32)
 }
 
 /// The nearest `count` other systems of the current galaxy, with distance.
@@ -89,6 +91,7 @@ pub fn nearby_systems(game: &GameUniverse, count: usize) -> Vec<(SystemId, f64)>
 #[allow(clippy::too_many_arguments)]
 fn perform_jump(
     mut pending: ResMut<PendingJump>,
+    upgrades: Res<crate::upgrades::ShipUpgrades>,
     mut game: ResMut<GameUniverse>,
     mut study: ResMut<StudyState>,
     mut run: ResMut<RunScore>,
@@ -106,7 +109,10 @@ fn perform_jump(
     let Some(current) = game.universe.system(game.current) else { return };
     let Some(destination) = game.universe.system(target) else { return };
 
-    let cost = jump_cost(destination.position.distance(current.position));
+    let cost = jump_cost(
+        destination.position.distance(current.position),
+        upgrades.tier(oj_materials::UpgradeSlot::LightDrive),
+    );
     if ship.energy < cost {
         return; // the map shows the price; arriving dry is not an option
     }
@@ -245,7 +251,7 @@ mod tests {
             assert_eq!(drones.iter(world).count(), 4, "drones did not respawn");
             let mut ships = world.query::<(&Ship, &crate::SimPos)>();
             let (ship, pos) = ships.single(world).unwrap();
-            let cost = jump_cost(dist);
+            let cost = jump_cost(dist, 0);
             assert!(
                 ship.energy <= 1.0e9 - cost + 1.0,
                 "jump cost not charged: {} left, cost {}",

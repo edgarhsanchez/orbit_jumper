@@ -106,6 +106,8 @@ pub struct Ship {
     pub shield: f64,
     pub shield_tier: u8,
     pub hull: f64,
+    /// Hull ceiling; HULL PLATING raises it, repair fills to it.
+    pub hull_max: f64,
     pub thrust: f64,
     /// Max distance at which the orbit command works; upgrades extend it.
     pub command_range: f64,
@@ -123,6 +125,7 @@ impl Default for Ship {
             shield: 100.0,
             shield_tier: 1,
             hull: 100.0,
+            hull_max: 100.0,
             thrust: 25.0,
             command_range: 8.0e10,
             orbit_boost: 1.0,
