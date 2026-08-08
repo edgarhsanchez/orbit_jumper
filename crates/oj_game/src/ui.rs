@@ -159,6 +159,20 @@ impl UiMode {
     }
 }
 
+/// True on devices that drive the game by touch (phones, tablets,
+/// touch laptops). On the web this reads the browser's own capability
+/// report; native builds are keyboard/mouse machines.
+fn touch_device() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .map(|w| w.navigator().max_touch_points() > 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    false
+}
+
 #[derive(Resource, Default)]
 struct UiLayoutState(Option<(UiMode, crate::sim::ViewMode, Armament)>);
 
@@ -1636,7 +1650,13 @@ fn relayout_ui(world: &mut World) {
         world.entity_mut(e).despawn();
     }
 
-    let m = Metrics::for_mode(mode, w);
+    let mut m = Metrics::for_mode(mode, w);
+    // Resolution alone lies about input: an iPad (or touch laptop) at
+    // desktop resolution still drives the game by touch and needs the
+    // on-screen controls a phone gets. Capability, not size.
+    if touch_device() {
+        m.touch_controls = true;
+    }
     enum Doc {
         Hud,
         Vessel,
